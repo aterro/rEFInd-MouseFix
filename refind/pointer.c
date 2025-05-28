@@ -189,7 +189,7 @@ return EFI_NOT_READY;
 if(!PointerAvailable) {
 return EFI_NOT_READY;
 }
-
+pdClear();
 EFI_STATUS Status = EFI_NOT_READY;
 EFI_ABSOLUTE_POINTER_STATE APointerState;
 EFI_SIMPLE_POINTER_STATE SPointerState;
@@ -266,33 +266,32 @@ return State;
 // Draw the mouse at the current coordinates
 ////////////////////////////////////////////////////////////////////////////////
 VOID pdDraw() {
-if (gSuppressPointerDraw) return;
-if (State.X == LastXPos && State.Y == LastYPos) return; // optional optimization
+    if (gSuppressPointerDraw) return;
+    // Removed the following line: if (State.X == LastXPos && State.Y == LastYPos) return;
 
-if(Background) {
-egFreeImage(Background);
-Background = NULL;
-}
-if(MouseImage) {
-UINTN Width = MouseImage->Width;
-UINTN Height = MouseImage->Height;
+    if(Background) {
+        egFreeImage(Background);
+        Background = NULL;
+    }
+    if(MouseImage) {
+        UINTN Width = MouseImage->Width;
+        UINTN Height = MouseImage->Height;
 
-if(State.X + Width > UGAWidth) {
-Width = UGAWidth - State.X;
-}
-if(State.Y + Height > UGAHeight) {
-Height = UGAHeight - State.Y;
-}
+        if(State.X + Width > UGAWidth) {
+            Width = UGAWidth - State.X;
+        }
+        if(State.Y + Height > UGAHeight) {
+            Height = UGAHeight - State.Y;
+        }
 
-Background = egCopyScreenArea(State.X, State.Y, Width, Height);
-if(Background) {
-BltImageCompositeBadge(Background, MouseImage, NULL, State.X, State.Y);
+        Background = egCopyScreenArea(State.X, State.Y, Width, Height);
+        if(Background) {
+            BltImageCompositeBadge(Background, MouseImage, NULL, State.X, State.Y);
+        }
+    }
+    LastXPos = State.X;
+    LastYPos = State.Y;
 }
-}
-LastXPos = State.X;
-LastYPos = State.Y;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // Restores the background at the position the mouse was last drawn
 ////////////////////////////////////////////////////////////////////////////////
