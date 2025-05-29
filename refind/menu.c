@@ -643,7 +643,7 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
           // To get ~50 FPS: Change 17 to 20 (20 milliseconds). UINTN LoopWaitMs = 20;
           // To get ~30 FPS: Change 17 to 33 (33 milliseconds). UINTN LoopWaitMs = 33;
           // Target ~60 FPS (1000ms / 60 = 16.67ms).
-         UINTN LoopWaitMs = 17; //ADDEDFORTESTING 17 gives 60 fps
+         UINTN LoopWaitMs = 1; //ADDEDFORTESTING 17 is 60 fps / 1 is as fast as it gets FPS control done at the end of while loop
         
         // Only calculate remaining time if the timer is NOT permanently disabled
         if (!TimerPermanentlyDisabled) {
@@ -934,7 +934,7 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
 
         PreviousPointerStateInMenu = CurrentPointerState;
     } // END while (MenuExit == MENU_EXIT_ZERO) loop
-
+      refit_call1_wrapper(gBS->Stall, 15000); // Ensure around 60 FPS
     // Reset pointerShouldBeVisible when exiting this menu instance
     pointerShouldBeVisible = FALSE;
     // --- Function Exit (Original cleanup calls) ---
