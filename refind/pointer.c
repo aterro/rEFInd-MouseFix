@@ -189,7 +189,7 @@ return EFI_NOT_READY;
 if(!PointerAvailable) {
 return EFI_NOT_READY;
 }
-pdClear();
+//pdClear();
 EFI_STATUS Status = EFI_NOT_READY;
 EFI_ABSOLUTE_POINTER_STATE APointerState;
 EFI_SIMPLE_POINTER_STATE SPointerState;
