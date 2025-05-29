@@ -615,10 +615,9 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
     LastInputMs = CurrentTimeMs;
     TimeSinceKeystroke = 0;
     ScreensaverTimeoutMs = GlobalConfig.ScreensaverTime * 1000;
-
-
     LOG(3, LOG_LINE_NORMAL, L"About to enter while() loop in RunGenericMenu()\n");
     // --- MAIN MENU LOOP ---
+    refit_call1_wrapper(gBS->Stall, 5000); // ADDEDFORTESTING to control FPS
     while (MenuExit == MENU_EXIT_ZERO) {
         CurrentTimeMs = GetCurrentMS_Mock();
         InputDetectedThisIteration = FALSE;
@@ -636,13 +635,15 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                 refit_call2_wrapper(gST->ConIn->Reset, gST->ConIn, TRUE);
             }
             if (WaitForRelease) {
-                refit_call1_wrapper(gBS->Stall, 10000);
+                refit_call1_wrapper(gBS->Stall, 15000); //ADDEDFORTESTING original was 10000
                 continue;
             }
         }
-
-        // 2. Determine the time to wait for the next event / frame update.
-        UINTN LoopWaitMs = 17; // Target ~60 FPS (1000ms / 60 = 16.67ms).
+          // Determine the time to wait for the next event / frame update.
+          // To get ~50 FPS: Change 17 to 20 (20 milliseconds). UINTN LoopWaitMs = 20;
+          // To get ~30 FPS: Change 17 to 33 (33 milliseconds). UINTN LoopWaitMs = 33;
+          // Target ~60 FPS (1000ms / 60 = 16.67ms).
+         UINTN LoopWaitMs = 17; //ADDEDFORTESTING 17 gives 60 fps
         
         // Only calculate remaining time if the timer is NOT permanently disabled
         if (!TimerPermanentlyDisabled) {
@@ -748,7 +749,8 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                 } else if (ClickDetected) {
                     State.PaintAll = TRUE;
                 } else {
-                    State.PaintSelection = TRUE;
+                    State.PaintSelection = FALSE; //ADDEDFORTESTING
+               //     State.PaintAll = FALSE; //ADDEDFORTESTING
                 }
             }
             LOG(3, LOG_LINE_NORMAL, L"InputDetectedThisIteration is TRUE. Resetting timers. PaintAll=%u, PaintSelection=%u.\n", State.PaintAll, State.PaintSelection);
@@ -794,11 +796,10 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                 LOG(3, LOG_LINE_NORMAL, L"No input, no timeout expired, or timer is permanently disabled. Just waiting.\n");
             }
         }
-
+        
         // --- Drawing Logic ---
-        if (PointerEnabled && pointerShouldBeVisible) {
-            pdClear();
-        }
+        
+        if (PointerEnabled && pointerShouldBeVisible) { pdClear();}
 
         if (State.PaintAll) {
             LOG(3, LOG_LINE_NORMAL, L"Painting ALL elements.\n");
