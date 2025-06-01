@@ -1,4 +1,3 @@
-
 /*
 * refind/pointer.c
 * Pointer device functions
@@ -46,6 +45,7 @@ EG_IMAGE* Background = NULL;
 POINTER_STATE State;
 
 BOOLEAN gSuppressPointerDraw = FALSE;
+BOOLEAN MouseTouchActive = TRUE; // Add this global boolean declaration
 
 ////////////////////////////////////////////////////////////////////////////////
 // Initialize all pointer devices
@@ -53,11 +53,14 @@ BOOLEAN gSuppressPointerDraw = FALSE;
 VOID pdInitialize() {
 pdCleanup(); // just in case
 
-if (!(GlobalConfig.EnableMouse || GlobalConfig.EnableTouch)) return;
+if (!(GlobalConfig.EnableMouse || GlobalConfig.EnableTouch)) {
+    MouseTouchActive = FALSE; // Set to FALSE if no pointer config is enabled
+    return;
+}
 
 // Get all handles that support absolute pointer protocol (usually touchscreens, but sometimes mice)
 UINTN NumPointerHandles = 0;
-EFI_STATUS handlestatus = refit_call5_wrapper(BS->LocateHandleBuffer, ByProtocol, &APointerGuid, NULL,
+EFI_STATUS handlestatus = refit_call5_wrapper(gBS->LocateHandleBuffer, ByProtocol, &APointerGuid, NULL,
 &NumPointerHandles, &APointerHandles);
 
 if (!EFI_ERROR(handlestatus)) {
@@ -65,7 +68,7 @@ APointerProtocol = AllocatePool(sizeof(EFI_ABSOLUTE_POINTER_PROTOCOL*) * NumPoin
 UINTN Index;
 for(Index = 0; Index < NumPointerHandles; Index++) {
 // Open the protocol on the handle
-EFI_STATUS status = refit_call6_wrapper(BS->OpenProtocol, APointerHandles[Index], &APointerGuid,
+EFI_STATUS status = refit_call6_wrapper(gBS->OpenProtocol, APointerHandles[Index], &APointerGuid,
 (VOID **) &APointerProtocol[NumAPointerDevices],
 SelfImageHandle, NULL, EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
 if (status == EFI_SUCCESS) {
@@ -78,7 +81,7 @@ GlobalConfig.EnableTouch = FALSE;
 
 // Get all handles that support simple pointer protocol (mice)
 NumPointerHandles = 0;
-handlestatus = refit_call5_wrapper(BS->LocateHandleBuffer, ByProtocol, &SPointerGuid, NULL,
+handlestatus = refit_call5_wrapper(gBS->LocateHandleBuffer, ByProtocol, &SPointerGuid, NULL,
 &NumPointerHandles, &SPointerHandles);
 
 if(!EFI_ERROR(handlestatus)) {
@@ -86,7 +89,7 @@ SPointerProtocol = AllocatePool(sizeof(EFI_SIMPLE_POINTER_PROTOCOL*) * NumPointe
 UINTN Index;
 for(Index = 0; Index < NumPointerHandles; Index++) {
 // Open the protocol on the handle
-EFI_STATUS status = refit_call6_wrapper(BS->OpenProtocol, SPointerHandles[Index], &SPointerGuid, (VOID **) &SPointerProtocol[NumSPointerDevices], SelfImageHandle, NULL, EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+EFI_STATUS status = refit_call6_wrapper(gBS->OpenProtocol, SPointerHandles[Index], &SPointerGuid, (VOID **) &SPointerProtocol[NumSPointerDevices], SelfImageHandle, NULL, EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
 if (status == EFI_SUCCESS) {
 NumSPointerDevices++;
 }
@@ -97,10 +100,15 @@ GlobalConfig.EnableMouse = FALSE;
 
 PointerAvailable = (NumAPointerDevices + NumSPointerDevices > 0);
 
-// load mouse icon
-if (PointerAvailable && GlobalConfig.EnableMouse) {
+// Load mouse icon - More robust loading (similar to RefindPlus logic)
+if (GlobalConfig.EnableMouse) {
 MouseImage = BuiltinIcon(BUILTIN_ICON_MOUSE);
 }
+
+// Set MouseTouchActive: True if either touch (if enabled) or mouse (if enabled) devices are found.
+// This allows both mouse and touch to be active if they are found and enabled.
+MouseTouchActive = (NumAPointerDevices > 0 && GlobalConfig.EnableTouch) ||
+                   (NumSPointerDevices > 0 && GlobalConfig.EnableMouse);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -108,12 +116,19 @@ MouseImage = BuiltinIcon(BUILTIN_ICON_MOUSE);
 ////////////////////////////////////////////////////////////////////////////////
 VOID pdCleanup() {
 PointerAvailable = FALSE;
-pdClear();
+// pdClear(); // No longer calling pdClear directly here, its logic is handled within pdDraw
+
+// Modified pdCleanup to directly restore background and free image
+if (Background) {
+    egDrawImage(Background, LastXPos, LastYPos);
+    egFreeImage(Background);
+    Background = NULL;
+}
 
 if(APointerHandles) {
 UINTN Index;
 for(Index = 0; Index < NumAPointerDevices; Index++) {
-refit_call4_wrapper(BS->CloseProtocol, APointerHandles[Index], &APointerGuid, SelfImageHandle, NULL);
+refit_call4_wrapper(gBS->CloseProtocol, APointerHandles[Index], &APointerGuid, SelfImageHandle, NULL);
 }
 MyFreePool(APointerHandles);
 APointerHandles = NULL;
@@ -125,7 +140,7 @@ APointerProtocol = NULL;
 if(SPointerHandles) {
 UINTN Index;
 for(Index = 0; Index < NumSPointerDevices; Index++) {
-refit_call4_wrapper(BS->CloseProtocol, SPointerHandles[Index], &SPointerGuid, SelfImageHandle, NULL);
+refit_call4_wrapper(gBS->CloseProtocol, SPointerHandles[Index], &SPointerGuid, SelfImageHandle, NULL);
 }
 MyFreePool(SPointerHandles);
 SPointerHandles = NULL;
@@ -136,7 +151,8 @@ SPointerProtocol = NULL;
 }
 if(MouseImage) {
 egFreeImage(MouseImage);
-Background = NULL;
+// Background = NULL; // This line was problematic if Background was still in use by pdDraw for its own cleanup
+MouseImage = NULL; // Ensure MouseImage is also set to NULL after freeing
 }
 NumAPointerDevices = 0;
 NumSPointerDevices = 0;
@@ -189,7 +205,15 @@ return EFI_NOT_READY;
 if(!PointerAvailable) {
 return EFI_NOT_READY;
 }
-//pdClear();
+
+// Gating check for MouseTouchActive: If pointer system isn't deemed "active",
+// don't try to get state. This is crucial for stability.
+if (!MouseTouchActive) { // Add this gate
+    return EFI_NOT_READY; // Return that no state is ready if not active
+}
+
+// pdClear(); // This line was problematic and is now removed.
+
 EFI_STATUS Status = EFI_NOT_READY;
 EFI_ABSOLUTE_POINTER_STATE APointerState;
 EFI_SIMPLE_POINTER_STATE SPointerState;
@@ -266,29 +290,49 @@ return State;
 // Draw the mouse at the current coordinates
 ////////////////////////////////////////////////////////////////////////////////
 VOID pdDraw() {
+    // Gate the drawing if no pointer system is active
+    if (!MouseTouchActive) {
+        return;
+    }
     if (gSuppressPointerDraw) return;
-    // Removed the following line: if (State.X == LastXPos && State.Y == LastYPos) return;
 
-    if(Background) {
-        egFreeImage(Background);
-        Background = NULL;
+    // Only redraw if the pointer has actually moved OR if the background needs to be initialized
+    // (e.g., first draw, or after a pdClear that wasn't for movement)
+    if (State.X == LastXPos && State.Y == LastYPos && Background != NULL) {
+        // If pointer hasn't moved AND we already have its background saved,
+        // it means it's already visible and doesn't need redrawing.
+        return;
     }
-    if(MouseImage) {
-        UINTN Width = MouseImage->Width;
-        UINTN Height = MouseImage->Height;
 
-        if(State.X + Width > UGAWidth) {
-            Width = UGAWidth - State.X;
-        }
-        if(State.Y + Height > UGAHeight) {
-            Height = UGAHeight - State.Y;
-        }
-
-        Background = egCopyScreenArea(State.X, State.Y, Width, Height);
-        if(Background) {
-            BltImageCompositeBadge(Background, MouseImage, NULL, State.X, State.Y);
-        }
+    // Restore the old background (clear the previous pointer position)
+    if(Background != NULL) {
+        egDrawImage(Background, LastXPos, LastYPos); // Restore the background where the pointer previously was
+        egFreeImage(Background); // Free the old background image (it's been drawn back to screen)
+        Background = NULL; // Mark as NULL
     }
+
+    // If MouseImage is not loaded, we can't draw anything
+    if (MouseImage == NULL) {
+        return;
+    }
+
+    // Capture the new background and draw the pointer at the current position
+    UINTN Width  = MouseImage->Width;
+    UINTN Height = MouseImage->Height;
+
+    if(State.X + Width > UGAWidth) {
+        Width = UGAWidth - State.X;
+    }
+    if(State.Y + Height > UGAHeight) {
+        Height = UGAHeight - State.Y;
+    }
+
+    Background = egCopyScreenArea(State.X, State.Y, Width, Height);
+    if(Background != NULL) { // Only attempt to draw if background was successfully captured
+        BltImageCompositeBadge(Background, MouseImage, NULL, State.X, State.Y);
+    }
+
+    // Update LastXPos/LastYPos for the next frame's comparison
     LastXPos = State.X;
     LastYPos = State.Y;
 }
@@ -296,9 +340,13 @@ VOID pdDraw() {
 // Restores the background at the position the mouse was last drawn
 ////////////////////////////////////////////////////////////////////////////////
 VOID pdClear() {
-if (Background) {
-egDrawImage(Background, LastXPos, LastYPos);
-egFreeImage(Background);
-Background = NULL;
-}
+    // Gate pdClear with MouseTouchActive
+    if (!MouseTouchActive) { // Add this gate
+        return;
+    }
+    if (Background) {
+        egDrawImage(Background, LastXPos, LastYPos);
+        egFreeImage(Background);
+        Background = NULL;
+    }
 }
