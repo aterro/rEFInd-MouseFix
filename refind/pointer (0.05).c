@@ -100,7 +100,7 @@ GlobalConfig.EnableMouse = FALSE;
     // === ADJUSTED DELAY HERE for consistency with menu.c and shorter wait ===
     // This gives the pointer drivers/firmware a bit more time to settle.
     if (NumAPointerDevices > 0 || NumSPointerDevices > 0) { // Check if any devices were successfully opened
-        refit_call1_wrapper(gBS->Stall, 500000); // 500,000 microseconds = 0.5 seconds
+        refit_call1_wrapper(gBS->Stall, 50000); // 50,000 microseconds = 0.05 seconds
     }
 PointerAvailable = (NumAPointerDevices + NumSPointerDevices > 0);
 
