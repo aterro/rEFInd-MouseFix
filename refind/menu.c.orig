@@ -390,11 +390,12 @@ static VOID SaveScreen(VOID) {
 } // VOID SaveScreen()
 
 // Mock GetCurrentMS for testing/simulation. Replace with actual EFI timer function if available.
-static UINT64 mock_ms_time_counter = 0; // Existing global counter
-
+static UINT64 mock_ms_time_counter = 0; // Global counter for mock milliseconds
 UINT64 GetCurrentMS_Mock(VOID) {
-    // This function simply returns the current mock time.
-    // The advancement logic will be handled where actual time passes (in WaitForInput).
+    // In a real EFI environment, this would read from a hardware timer.
+    // Here, we manually advance it to simulate time passing.
+    // We'll advance it by 1ms per call to provide a granular time base.
+    mock_ms_time_counter++; // Increment by 1ms per call
     return mock_ms_time_counter;
 }
 //
@@ -433,94 +434,92 @@ INPUT_TYPE WaitForInput(IN UINTN TimeoutMs) {
     UINTN       Index;
 
     UINTN InitialEventCount = 1 + pdCount();
-
-    WaitListLocal = AllocatePool(InitialEventCount * sizeof(EFI_EVENT)); //
+    
+    WaitListLocal = AllocatePool(InitialEventCount * sizeof(EFI_EVENT));
     if (WaitListLocal == NULL) {
-        LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to allocate initial WaitList memory\n"); //
+        LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to allocate initial WaitList memory\n");
         if (TimeoutMs > 0) {
-            refit_call1_wrapper(gBS->Stall, TimeoutMs * 10000); //
+            refit_call1_wrapper(gBS->Stall, TimeoutMs * 10000);
         } else {
-            refit_call1_wrapper(gBS->Stall, 10000); //
+            refit_call1_wrapper(gBS->Stall, 10000);
         }
-        // This is a fallback and the mock timer won't advance here, so it won't be accurate.
-        // But for testing purposes, if allocation fails, we still need to return.
         return INPUT_TIMER_ERROR;
     }
 
-    WaitListLocal[WaitListLength++] = gST->ConIn->WaitForKey; // Keyboard event is always first [cite: 141]
+    WaitListLocal[WaitListLength++] = gST->ConIn->WaitForKey;
+
     for (UINTN i = 0; i < pdCount(); i++) {
-        WaitListLocal[WaitListLength++] = pdWaitEvent(i); // Get the EFI_EVENT for each pointer device [cite: 142]
+        WaitListLocal[WaitListLength++] = pdWaitEvent(i);
     }
 
-    if (TimeoutMs > 0) { // If a timeout is specified [cite: 134]
-        // Reallocate WaitListLocal to add space for the TimerEvent [cite: 143]
-        WaitListLocal = ReallocatePool(WaitListLocal,
+    if (TimeoutMs > 0) { // If a timeout is specified
+        // Reallocate WaitListLocal to add space for the TimerEvent
+        WaitListLocal = ReallocatePool(WaitListLocal, 
                                        WaitListLength * sizeof(EFI_EVENT),
-                                       (WaitListLength + 1) * sizeof(EFI_EVENT)); // [cite: 144]
+                                       (WaitListLength + 1) * sizeof(EFI_EVENT));
         if (WaitListLocal == NULL) {
-            LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to reallocate WaitList for timer\n"); // [cite: 145]
-            MyFreePool(WaitListLocal); // [cite: 146]
-            refit_call1_wrapper(gBS->Stall, TimeoutMs * 10000); // [cite: 147]
+            LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to reallocate WaitList for timer\n");
+            MyFreePool(WaitListLocal);
+            refit_call1_wrapper(gBS->Stall, TimeoutMs * 10000);
             return INPUT_TIMER_ERROR;
         }
-        WaitListLength++; // [cite: 146]
+        WaitListLength++;
+
         Status = refit_call5_wrapper(gBS->CreateEvent,
                                      EVT_TIMER,
                                      TPL_CALLBACK,
-                                     NULL, NULL, &TimerEvent); // [cite: 147, 148]
+                                     NULL, NULL, &TimerEvent);
         if (EFI_ERROR(Status)) {
-            LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to create timer event with EVT_TIMER only: %r\n", Status); // [cite: 149]
-            MyFreePool(WaitListLocal); // [cite: 150]
-            refit_call1_wrapper(gBS->Stall, TimeoutMs * 10000); // [cite: 151]
+            LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to create timer event with EVT_TIMER only: %r\n", Status);
+            MyFreePool(WaitListLocal);
+            refit_call1_wrapper(gBS->Stall, TimeoutMs * 10000);
             return INPUT_TIMER_ERROR;
         }
 
         Status = refit_call3_wrapper(gBS->SetTimer, TimerEvent, TimerRelative,
-                                     TimeoutMs * 10000); // Convert milliseconds to 100ns units [cite: 150]
+                                     TimeoutMs * 10000); // Convert milliseconds to 100ns units
         if (EFI_ERROR(Status)) {
-            LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to set timer after creation: %r\n", Status); // [cite: 151]
-            refit_call1_wrapper(gBS->CloseEvent, TimerEvent); // [cite: 152]
-            MyFreePool(WaitListLocal); // [cite: 153]
-            refit_call1_wrapper(gBS->Stall, TimeoutMs * 10000); // [cite: 153]
+            LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to set timer after creation: %r\n", Status);
+            refit_call1_wrapper(gBS->CloseEvent, TimerEvent);
+            MyFreePool(WaitListLocal);
+            refit_call1_wrapper(gBS->Stall, TimeoutMs * 10000);
             return INPUT_TIMER_ERROR;
         }
-
-        WaitListLocal[WaitListLength - 1] = TimerEvent; // Timer event at the end [cite: 153]
+        
+        WaitListLocal[WaitListLength - 1] = TimerEvent; // Timer event at the end
     }
 
     // This is the actual wait.
-    Status = refit_call3_wrapper(gBS->WaitForEvent, WaitListLength, WaitListLocal, &Index); // [cite: 154]
-
-    // *** RE-INTEGRATE THE MOCK TIMER ADVANCEMENT HERE ***
-    // This is the key: Advance the mock time by the amount that was intended to be waited.
-    // This simulates time passing during the actual EFI wait.
-    mock_ms_time_counter += TimeoutMs; // [cite: 155]
+    Status = refit_call3_wrapper(gBS->WaitForEvent, WaitListLength, WaitListLocal, &Index);
+    
+    // *** CRITICAL FIX FOR MOCK TIMER ***
+    // Always advance the mock time by the amount of time that was intended to be waited.
+    mock_ms_time_counter += TimeoutMs; 
 
     if (TimerEvent != NULL) {
-        refit_call1_wrapper(gBS->CloseEvent, TimerEvent); // [cite: 155]
+        refit_call1_wrapper(gBS->CloseEvent, TimerEvent);
     }
-    MyFreePool(WaitListLocal); // [cite: 156]
+    MyFreePool(WaitListLocal);
 
     if (EFI_ERROR(Status)) {
-        LOG(2, LOG_LINE_NORMAL, L"WaitForInput: WaitForEvent error: %r\n", Status); // [cite: 157]
+        LOG(2, LOG_LINE_NORMAL, L"WaitForInput: WaitForEvent error: %r\n", Status);
         return INPUT_TIMER_ERROR;
     }
 
-    if (Index == 0) { // Keyboard event (always first if added) [cite: 157]
-        return INPUT_KEY; // [cite: 157]
-    } else if (pdCount() > 0 && Index >= 1 && Index < (1 + pdCount())) { // Pointer event(s) [cite: 158]
-        return INPUT_POINTER; // [cite: 158]
-    } else if (TimeoutMs > 0 && Index == (WaitListLength - 1) && TimerEvent != NULL) { // Timer event [cite: 159]
-        return INPUT_TIMEOUT_EXPIRED; // [cite: 159]
+    if (Index == 0) { // Keyboard event (always first if added)
+        return INPUT_KEY;
+    } else if (pdCount() > 0 && Index >= 1 && Index < (1 + pdCount())) { // Pointer event(s)
+        return INPUT_POINTER;
+    } else if (TimeoutMs > 0 && Index == (WaitListLength - 1) && TimerEvent != NULL) { // Timer event
+        return INPUT_TIMEOUT_EXPIRED;
     }
-
-    // If we reach here with TimeoutMs == 0 (indefinite wait) and no event,
-    // ensure mock time still advances minimally to prevent complete freeze.
-    // This handles the case where WaitForInput is called with 0 timeout and nothing happens.
+    
+    // If we reach here without an explicit event, it means something unexpected happened
+    // or we waited indefinitely with 0 timeout and no input.
     if (TimeoutMs == 0) {
-        mock_ms_time_counter += 1; // Simulate minimal time step for the loop to progress. [cite: 161]
+        mock_ms_time_counter += 1; // Simulate minimal time step for the loop to progress.
     }
-    return INPUT_NO_EVENT; // [cite: 162]
+    return INPUT_NO_EVENT;
 }
 //
 // generic menu function
@@ -544,8 +543,8 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
 
     UINTN MenuExit;
     UINTN Item;
-    UINT64 CurrentTimeMs = 0; // Use mock timer
-    UINT64 LastInputMs = 0;   // Use mock timer
+    UINT64 CurrentTimeMs = 0;
+    UINT64 LastInputMs = 0;
     UINTN TimeSinceKeystroke = 0;
     UINTN ScreensaverTimeoutMs = 0;
     UINTN MenuTimeoutMs = 0;
@@ -556,6 +555,9 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
     BOOLEAN PreviousPointerPressed = FALSE;
     BOOLEAN ClickDetected = FALSE;
     static BOOLEAN pointerShouldBeVisible = FALSE;
+
+    // NEW FLAG: This flag will be set to TRUE once any user input occurs,
+    // causing the timer to stop and clear permanently for this menu session.
     BOOLEAN TimerPermanentlyDisabled = FALSE; // Initialize to FALSE
 
     LOG(2, LOG_LINE_NORMAL, L"Running menu screen: '%s'\n", Screen->Title);
@@ -594,9 +596,10 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                 LOG(3, LOG_LINE_NORMAL, L"Immediate key was not a shortcut, waiting for release.\n");
             }
             refit_call2_wrapper(gST->ConIn->Reset, gST->ConIn, FALSE);
-            if (HaveTimeout) {
+            // If any immediate key is pressed, disable timer permanently
+            if (HaveTimeout) { // Only if a timeout is configured for this screen
                 TimerPermanentlyDisabled = TRUE;
-                StyleFunc(Screen, &State, MENU_FUNCTION_PAINT_TIMEOUT, L"");
+                StyleFunc(Screen, &State, MENU_FUNCTION_PAINT_TIMEOUT, L""); // Clear message
                 LOG(3, LOG_LINE_NORMAL, L"Immediate key detected. Timer permanently disabled.\n");
             }
         } else {
@@ -605,19 +608,18 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
     }
 
     State.PaintAll = TRUE;
+    // Force initial full paint
 
-    // Initialize timing variables for the loop start using the mock timer
+    // Initialize timing variables for the loop start
     CurrentTimeMs = GetCurrentMS_Mock();
     LastInputMs = CurrentTimeMs;
     TimeSinceKeystroke = 0;
     ScreensaverTimeoutMs = GlobalConfig.ScreensaverTime * 1000;
-
-
     LOG(3, LOG_LINE_NORMAL, L"About to enter while() loop in RunGenericMenu()\n");
-    // REMOVE THIS STALL: refit_call1_wrapper(gBS->Stall, 5000);
-
+    // --- MAIN MENU LOOP ---
+    refit_call1_wrapper(gBS->Stall, 5000); // ADDEDFORTESTING to control FPS
     while (MenuExit == MENU_EXIT_ZERO) {
-        CurrentTimeMs = GetCurrentMS_Mock(); // Update current time using the mock timer
+        CurrentTimeMs = GetCurrentMS_Mock();
         InputDetectedThisIteration = FALSE;
         InputType = INPUT_NO_EVENT;
 
@@ -633,18 +635,16 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                 refit_call2_wrapper(gST->ConIn->Reset, gST->ConIn, TRUE);
             }
             if (WaitForRelease) {
-                refit_call1_wrapper(gBS->Stall, 15000); // Stall for 1.5ms
+                refit_call1_wrapper(gBS->Stall, 15000); //ADDEDFORTESTING original was 10000
                 continue;
             }
         }
-
-        // Determine the time to wait for the next event / frame update for FPS control.
-        // The mock timer advances by 1ms per call, so if we call WaitForInput with N ms,
-        // the mock timer will effectively advance by N ms.
-        // We want to achieve roughly 60 FPS, which is ~16.67 ms per frame.
-        // So, we'll aim for a LoopWaitMs of around 16 or 17 ms.
-        UINTN LoopWaitMs = 17; // Target ~60 FPS (1000ms / 60 frames = 16.66...ms). Use 17 for robustness.
-
+          // Determine the time to wait for the next event / frame update.
+          // To get ~50 FPS: Change 17 to 20 (20 milliseconds). UINTN LoopWaitMs = 20;
+          // To get ~30 FPS: Change 17 to 33 (33 milliseconds). UINTN LoopWaitMs = 33;
+          // Target ~60 FPS (1000ms / 60 = 16.67ms).
+         UINTN LoopWaitMs = 1; //ADDEDFORTESTING 17 is 60 fps / 1 is as fast as it gets FPS control done at the end of while loop
+        
         // Only calculate remaining time if the timer is NOT permanently disabled
         if (!TimerPermanentlyDisabled) {
             // Calculate remaining time for menu timeout if active
@@ -655,8 +655,7 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                     RemainingMenuTimeoutMs = (UINTN)(MenuTimeoutMs - ElapsedSinceLastInputMs);
                 }
 
-                // If remaining timeout is less than our calculated FPS wait, use it.
-                if (RemainingMenuTimeoutMs > 0 && RemainingMenuTimeoutMs < LoopWaitMs) {
+                if (RemainingMenuTimeoutMs < LoopWaitMs) {
                     LoopWaitMs = RemainingMenuTimeoutMs;
                 }
             }
@@ -668,14 +667,12 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                 if (ScreensaverTimeoutMs > ElapsedSinceLastInputMs) {
                     RemainingScreensaverMs = (UINTN)(ScreensaverTimeoutMs - ElapsedSinceLastInputMs);
                 }
-                // If remaining screensaver timeout is less than our calculated FPS wait, use it.
-                if (RemainingScreensaverMs > 0 && RemainingScreensaverMs < LoopWaitMs) {
+                if (RemainingScreensaverMs < LoopWaitMs) {
                     LoopWaitMs = RemainingScreensaverMs;
                 }
             }
         } else {
-            // If timer is permanently disabled, ensure LoopWaitMs is still at least 17ms for responsiveness.
-            // This ensures smooth mouse movement even when the main menu timer is off.
+            // If timer is permanently disabled, force a small wait to allow input processing
             LoopWaitMs = 17; // Maintain a constant frame rate for responsiveness
         }
 
@@ -684,17 +681,13 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
         if (LoopWaitMs == 0 && (HaveTimeout || ScreensaverTimeoutMs > 0 || PointerEnabled)) {
             LoopWaitMs = 1;
         } else if (!HaveTimeout && ScreensaverTimeoutMs == 0 && !PointerEnabled) {
-            LoopWaitMs = 0; // Can wait indefinitely if no timeouts or pointer
+            LoopWaitMs = 0;
         }
 
         // 3. Call WaitForInput to wait for an event or the calculated timeout.
         LOG(3, LOG_LINE_NORMAL, L"Calling WaitForInput with LoopWaitMs = %u.\n", LoopWaitMs);
         InputType = WaitForInput(LoopWaitMs);
         LOG(3, LOG_LINE_NORMAL, L"WaitForInput returned InputType: %u.\n", InputType);
-
-        // CurrentTimeMs is updated by GetCurrentMS_Mock() within WaitForInput based on the actual wait.
-        // So, CurrentTimeMs at the start of the next loop iteration will reflect the advanced mock time.
-
         // 4. Update InputDetectedThisIteration based on WaitForInput result and get actual key.
         if (InputType == INPUT_KEY) {
             Status = refit_call2_wrapper(gST->ConIn->ReadKeyStroke, gST->ConIn, &key);
@@ -736,13 +729,14 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
 
         // --- Timer and Screensaver Logic ---
         if (InputDetectedThisIteration) {
-            LastInputMs = CurrentTimeMs; // CurrentTimeMs is already updated by WaitForInput
+            LastInputMs = CurrentTimeMs;
             TimeSinceKeystroke = 0;
 
-            // If any input detected, disable the timer permanently for this menu session
-            if (HaveTimeout) {
-                TimerPermanentlyDisabled = TRUE;
-                StyleFunc(Screen, &State, MENU_FUNCTION_PAINT_TIMEOUT, L"");
+            // NEW: If any input detected, disable the timer permanently for this menu session
+            if (HaveTimeout) { // Check if a timeout is configured for this screen
+                TimerPermanentlyDisabled = TRUE; // Set the flag to permanently disable the timer
+                // Clear any displayed timeout message immediately
+                StyleFunc(Screen, &State, MENU_FUNCTION_PAINT_TIMEOUT, L""); // Call PAINT_TIMEOUT with empty string to clear it
                 LOG(3, LOG_LINE_NORMAL, L"Input detected. Timer permanently disabled.\n");
             }
 
@@ -755,7 +749,8 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                 } else if (ClickDetected) {
                     State.PaintAll = TRUE;
                 } else {
-                    State.PaintSelection = FALSE;
+                    State.PaintSelection = FALSE; //ADDEDFORTESTING
+               //     State.PaintAll = FALSE; //ADDEDFORTESTING
                 }
             }
             LOG(3, LOG_LINE_NORMAL, L"InputDetectedThisIteration is TRUE. Resetting timers. PaintAll=%u, PaintSelection=%u.\n", State.PaintAll, State.PaintSelection);
@@ -788,7 +783,7 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                         LOG(1, LOG_LINE_NORMAL, L"Screensaver activated.\n");
                         SaveScreen();
                         State.PaintAll = TRUE;
-                        LastInputMs = CurrentTimeMs; // Reset after screensaver activation
+                        LastInputMs = CurrentTimeMs;
                         TimeSinceKeystroke = 0;
                         if (HaveTimeout) {
                            StyleFunc(Screen, &State, MENU_FUNCTION_PAINT_TIMEOUT, L"");
@@ -801,9 +796,10 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                 LOG(3, LOG_LINE_NORMAL, L"No input, no timeout expired, or timer is permanently disabled. Just waiting.\n");
             }
         }
-
+        
         // --- Drawing Logic ---
-        if (PointerEnabled && pointerShouldBeVisible) { pdClear(); }
+        
+        if (PointerEnabled && pointerShouldBeVisible) { pdClear();}
 
         if (State.PaintAll) {
             LOG(3, LOG_LINE_NORMAL, L"Painting ALL elements.\n");
@@ -822,6 +818,7 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
             pdDraw();
         }
 
+
         if (MenuExit != MENU_EXIT_ZERO) {
             LOG(3, LOG_LINE_NORMAL, L"MenuExit is non-zero (%u). Breaking loop.\n", MenuExit);
             break;
@@ -837,15 +834,15 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
             LOG(3, LOG_LINE_NORMAL, L"Processing keyboard input (ScanCode=%x, UnicodeChar=%x).\n", key.ScanCode, key.UnicodeChar);
             switch (key.ScanCode) {
                 case SCAN_UP: LOG(3, LOG_LINE_NORMAL, L"Key: UP.\n");
-                    UpdateScroll(&State, SCROLL_LINE_UP); State.PaintSelection = TRUE; break;
+                UpdateScroll(&State, SCROLL_LINE_UP); State.PaintSelection = TRUE; break;
                 case SCAN_LEFT: LOG(3, LOG_LINE_NORMAL, L"Key: LEFT.\n"); UpdateScroll(&State, SCROLL_LINE_LEFT); State.PaintSelection = TRUE; break;
                 case SCAN_DOWN: LOG(3, LOG_LINE_NORMAL, L"Key: DOWN.\n"); UpdateScroll(&State, SCROLL_LINE_DOWN); State.PaintSelection = TRUE; break;
                 case SCAN_RIGHT: LOG(3, LOG_LINE_NORMAL, L"Key: RIGHT.\n"); UpdateScroll(&State, SCROLL_LINE_RIGHT);
-                    State.PaintSelection = TRUE; break;
+                State.PaintSelection = TRUE; break;
                 case SCAN_HOME: LOG(3, LOG_LINE_NORMAL, L"Key: HOME.\n"); UpdateScroll(&State, SCROLL_FIRST); State.PaintSelection = TRUE; break;
                 case SCAN_END: LOG(3, LOG_LINE_NORMAL, L"Key: END.\n"); UpdateScroll(&State, SCROLL_LAST); State.PaintSelection = TRUE; break;
                 case SCAN_PAGE_UP: LOG(3, LOG_LINE_NORMAL, L"Key: PAGE UP.\n");
-                    UpdateScroll(&State, SCROLL_PAGE_UP); State.PaintSelection = TRUE; break;
+                UpdateScroll(&State, SCROLL_PAGE_UP); State.PaintSelection = TRUE; break;
                 case SCAN_PAGE_DOWN: LOG(3, LOG_LINE_NORMAL, L"Key: PAGE DOWN.\n"); UpdateScroll(&State, SCROLL_PAGE_DOWN); State.PaintSelection = TRUE; break;
                 case SCAN_ESC: LOG(3, LOG_LINE_NORMAL, L"Key: ESC. Setting MenuExit to ESCAPE.\n"); MenuExit = MENU_EXIT_ESCAPE; break;
                 case SCAN_INSERT: case SCAN_F2: LOG(3, LOG_LINE_NORMAL, L"Key: INSERT/F2. Setting MenuExit to DETAILS.\n"); MenuExit = MENU_EXIT_DETAILS; break;
@@ -879,38 +876,41 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
             pointerShouldBeVisible = TRUE;
             ClickDetected = CurrentPointerState.Press && !PreviousPointerPressed;
             LOG(3, LOG_LINE_NORMAL, L"Processing pointer input. ClickDetected: %u.\n", ClickDetected);
-
+            
+            // This condition is critical: if any mouse motion or click is detected,
+            // we treat it as input that should stop the timer.
             if (CurrentPointerState.X != PreviousPointerStateInMenu.X ||
                 CurrentPointerState.Y != PreviousPointerStateInMenu.Y ||
                 CurrentPointerState.Press != PreviousPointerStateInMenu.Press) {
-                InputDetectedThisIteration = TRUE;
+                InputDetectedThisIteration = TRUE; // Set to TRUE for any change in mouse state
             } else {
                 InputDetectedThisIteration = FALSE;
             }
 
             if (StyleFunc != MainMenuStyle) {
-                if (ClickDetected) { MenuExit = MENU_EXIT_ENTER; }
+                if (ClickDetected) { MenuExit = MENU_EXIT_ENTER;
+                }
             } else {
                 State.PreviousSelection = State.CurrentSelection;
                 Item = FindMainMenuItem(Screen, &State, CurrentPointerState.X, CurrentPointerState.Y);
                 switch (Item) {
                     case POINTER_NO_ITEM:
                         if(DrawSelection) { DrawSelection = FALSE;
-                            State.PaintSelection = TRUE; LOG(3, LOG_LINE_NORMAL, L"Pointer: No item, deselecting.\n"); }
+                        State.PaintSelection = TRUE; LOG(3, LOG_LINE_NORMAL, L"Pointer: No item, deselecting.\n"); }
                         break;
                     case POINTER_LEFT_ARROW:
                         if(ClickDetected) { UpdateScroll(&State, SCROLL_PAGE_UP);
-                            State.PaintAll = TRUE; State.PaintSelection = TRUE; LOG(3, LOG_LINE_NORMAL, L"Pointer: Left arrow clicked.\n");
+                        State.PaintAll = TRUE; State.PaintSelection = TRUE; LOG(3, LOG_LINE_NORMAL, L"Pointer: Left arrow clicked.\n");
                         }
                         if(DrawSelection) { DrawSelection = FALSE;
-                            State.PaintSelection = TRUE; }
+                        State.PaintSelection = TRUE; }
                         break;
                     case POINTER_RIGHT_ARROW:
                         if(ClickDetected) { UpdateScroll(&State, SCROLL_PAGE_DOWN);
-                            State.PaintAll = TRUE; State.PaintSelection = TRUE; LOG(3, LOG_LINE_NORMAL, L"Pointer: Right arrow clicked.\n");
+                        State.PaintAll = TRUE; State.PaintSelection = TRUE; LOG(3, LOG_LINE_NORMAL, L"Pointer: Right arrow clicked.\n");
                         }
                         if(DrawSelection) { DrawSelection = FALSE;
-                            State.PaintSelection = TRUE; }
+                        State.PaintSelection = TRUE; }
                         break;
                     default:
                         if (!DrawSelection || Item != State.CurrentSelection) {
@@ -919,23 +919,22 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                             LOG(3, LOG_LINE_NORMAL, L"Pointer: Hovering item %d.\n", Item);
                         }
                         if(ClickDetected) { MenuExit = MENU_EXIT_ENTER;
-                            LOG(3, LOG_LINE_NORMAL, L"Pointer: Item %d clicked. Setting MenuExit to ENTER.\n", Item);
+                        LOG(3, LOG_LINE_NORMAL, L"Pointer: Item %d clicked. Setting MenuExit to ENTER.\n", Item);
                         }
                         break;
                 }
             }
             PreviousPointerPressed = CurrentPointerState.Press;
         } else {
-            if (!PointerActive) { PreviousPointerPressed = FALSE; }
-            else { PreviousPointerStateInMenu = CurrentPointerState; }
+            if (!PointerActive) { PreviousPointerPressed = FALSE;
+            }
+            else { PreviousPointerStateInMenu = CurrentPointerState;
+            }
         }
 
         PreviousPointerStateInMenu = CurrentPointerState;
-
     } // END while (MenuExit == MENU_EXIT_ZERO) loop
-
-    // REMOVE THIS STALL: refit_call1_wrapper(gBS->Stall, 15000);
-
+      refit_call1_wrapper(gBS->Stall, 15000); // Ensure around 60 FPS
     // Reset pointerShouldBeVisible when exiting this menu instance
     pointerShouldBeVisible = FALSE;
     // --- Function Exit (Original cleanup calls) ---
@@ -951,7 +950,6 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
     LOG(3, LOG_LINE_NORMAL, L"Returning %d from RunGenericMenu()\n", MenuExit);
     return MenuExit;
 }
-
 // RunGenericMenu()
 //
 // text-mode generic style
