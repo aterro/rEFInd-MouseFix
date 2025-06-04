@@ -53,11 +53,11 @@ BOOLEAN MouseTouchActive = TRUE;
 ////////////////////////////////////////////////////////////////////////////////
 VOID pdInitialize() {
     pdCleanup();
-// just in case
+    // just in case
 
     if (!(GlobalConfig.EnableMouse || GlobalConfig.EnableTouch)) {
         MouseTouchActive = FALSE;
-// Set to FALSE if no pointer config is enabled 
+        // Set to FALSE if no pointer config is enabled 
         return;
     }
 
@@ -72,13 +72,12 @@ VOID pdInitialize() {
             // Open the protocol on the handle
             EFI_STATUS status = refit_call6_wrapper(gBS->OpenProtocol, APointerHandles[Index], &APointerGuid,
                                                      (VOID **) &APointerProtocol[NumAPointerDevices],
-   
-                                                    SelfImageHandle, NULL, EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+                                                     SelfImageHandle, NULL, EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
             if (status == EFI_SUCCESS) {
                 NumAPointerDevices++;
-// NEW: Add a small delay here if needed for absolute pointers (e.g., touchscreens)
-                 refit_call1_wrapper(gBS->Stall, 5 * 1000);
-// 5 milliseconds (5000 microseconds)
+                // NEW: Add a small delay here if needed for absolute pointers (e.g., touchscreens)
+                refit_call1_wrapper(gBS->Stall, 5 * 1000);
+                // 5 milliseconds (5000 microseconds)
             }
         }
     } else {
@@ -93,14 +92,25 @@ VOID pdInitialize() {
         SPointerProtocol = AllocatePool(sizeof(EFI_SIMPLE_POINTER_PROTOCOL*) * NumPointerHandles);
         UINTN Index;
         for(Index = 0; Index < NumPointerHandles; Index++) {
-            // Open the protocol on the handle
-            EFI_STATUS status = refit_call6_wrapper(gBS->OpenProtocol, SPointerHandles[Index], &SPointerGuid, (VOID **) &SPointerProtocol[NumSPointerDevices], SelfImageHandle, NULL, EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+            EFI_STATUS status = EFI_NOT_READY; // Initialize status for the retry loop
+            for (UINTN retry = 0; retry < 3; retry++) { // 3 trials for OpenProtocol
+                // Open the protocol on the handle
+                status = refit_call6_wrapper(gBS->OpenProtocol, SPointerHandles[Index], &SPointerGuid, (VOID **) &SPointerProtocol[NumSPointerDevices], SelfImageHandle, NULL, EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+                if (status == EFI_SUCCESS) {
+                    break; // Success, exit retry loop
+                }
+                // Add a small stall before the next retry attempt
+                refit_call1_wrapper(gBS->Stall, 10 * 1000); // 10 milliseconds (10000 microseconds)
+            }
+
             if (status == EFI_SUCCESS) {
                 NumSPointerDevices++;
-// NEW: Add a small delay after successfully opening the protocol for each simple pointer device
+                // Existing stall after successfully opening the protocol (either first attempt or a retry)
                 refit_call1_wrapper(gBS->Stall, 5 * 1000);
-// 5 milliseconds (5000 microseconds)
+                // 5 milliseconds (5000 microseconds)
             } else {
+                // Handle case where protocol could not be opened after all retries
+                // (e.g., GlobalConfig.EnableMouse = FALSE, or logging specific errors)
             }
         }
     } else {
@@ -109,10 +119,10 @@ VOID pdInitialize() {
     // Existing 0.5-second general delay for all pointer drivers/firmware to settle
     if (NumAPointerDevices > 0 || NumSPointerDevices > 0) { // Check if any devices were successfully opened 
         refit_call1_wrapper(gBS->Stall, 500000);
-// 500,000 microseconds = 0.5 seconds 
+        // 500,000 microseconds = 0.5 seconds 
     }
     PointerAvailable = (NumAPointerDevices + NumSPointerDevices > 0);
-// Load mouse icon - More robust loading (similar to RefindPlus logic)
+    // Load mouse icon - More robust loading (similar to RefindPlus logic)
     if (GlobalConfig.EnableMouse) {
         MouseImage = BuiltinIcon(BUILTIN_ICON_MOUSE);
     }
@@ -218,12 +228,8 @@ EFI_STATUS pdUpdateState() {
         return EFI_NOT_READY;
     }
 
-    // Gating check for MouseTouchActive: If pointer system isn't deemed "active",
-    // don't try to get state.
-// This is crucial for stability. 
-    if (!MouseTouchActive) { // Add this gate 
+    if (!MouseTouchActive) {
         return EFI_NOT_READY;
-// Return that no state is ready if not active 
     }
 
     EFI_STATUS Status = EFI_NOT_READY;
@@ -234,7 +240,6 @@ EFI_STATUS pdUpdateState() {
     UINTN Index;
     for(Index = 0; Index < NumAPointerDevices; Index++) {
         EFI_STATUS PointerStatus = refit_call2_wrapper(APointerProtocol[Index]->GetState, APointerProtocol[Index], &APointerState);
-// if new state found and we haven't already found a new state
         if(!EFI_ERROR(PointerStatus) && EFI_ERROR(Status)) { 
             Status = EFI_SUCCESS;
 #ifdef EFI32
@@ -245,13 +250,12 @@ EFI_STATUS pdUpdateState() {
             State.Y = (APointerState.CurrentY * UGAHeight) / APointerProtocol[Index]->Mode->AbsoluteMaxY; 
 #endif
             State.Holding = (APointerState.ActiveButtons & EFI_ABSP_TouchActive);
-        } else if (PointerStatus == EFI_NOT_READY) { // NEW: Add stall for specific error
-            refit_call1_wrapper(gBS->Stall, 5 * 1000); // 5 millisecond (5000 microseconds)
+        } else if (PointerStatus == EFI_NOT_READY) {
+            refit_call1_wrapper(gBS->Stall, 5 * 1000);
         }
     }
     for(Index = 0; Index < NumSPointerDevices; Index++) { 
         EFI_STATUS PointerStatus = refit_call2_wrapper(SPointerProtocol[Index]->GetState, SPointerProtocol[Index], &SPointerState);
-// if new state found and we haven't already found a new state
         if(!EFI_ERROR(PointerStatus) && EFI_ERROR(Status)) { 
             Status = EFI_SUCCESS;
             INT32 TargetX = 0; 
@@ -280,11 +284,9 @@ EFI_STATUS pdUpdateState() {
             } else {
                 State.Y = TargetY;
             }
-
             State.Holding = SPointerState.LeftButton;
-        } else if (PointerStatus == EFI_NOT_READY) { // NEW: Add stall for specific error
-            refit_call1_wrapper(gBS->Stall, 5 * 1000); // 5 millisecond (5000 microseconds)
-        }
+        } else if (PointerStatus == EFI_NOT_READY) {  refit_call1_wrapper(gBS->Stall, 10 * 1000); 
+      }
     }
 
     State.Press = (LastHolding && !State.Holding);

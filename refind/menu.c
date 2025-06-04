@@ -698,7 +698,7 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                 InputDetectedThisIteration = FALSE;
                 LOG(3, LOG_LINE_NORMAL, L"POINTER Error: %r. Deactivating pointer.\n", PointerStatusLocal);
                 // Add a tiny wait specifically if the pointer is not ready.
-                if (PointerStatusLocal == EFI_NOT_READY) {
+//                if (PointerStatusLocal == EFI_NOT_READY) {
                     // This stall is in microseconds.
                     // 500 = 0.5 milliseconds: Minimal impact on FPS, good for transient issues.
                     // 1000 = 1 millisecond: Still very low impact, might resolve slightly more stubborn cases.
@@ -706,9 +706,9 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                     //                             can be effective for more challenging hardware quirks.
                     // Higher values (e.g., 5000+ us) will make the menu feel sluggish if triggered often.
                     /*********************************************/
-                    refit_call1_wrapper(gBS->Stall, 1500);
+//                    refit_call1_wrapper(gBS->Stall, 1500);
                     /*********************************************/
-                }
+//                }
             }
         } else if (InputType == INPUT_TIMEOUT_EXPIRED) {
             LOG(3, LOG_LINE_NORMAL, L"InputType: INPUT_TIMEOUT_EXPIRED. No direct user input.\n");
