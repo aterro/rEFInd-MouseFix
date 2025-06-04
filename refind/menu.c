@@ -397,31 +397,6 @@ UINT64 GetCurrentMS_Mock(VOID) {
     // The advancement logic will be handled where actual time passes (in WaitForInput).
     return mock_ms_time_counter;
 }
-//
-// NEW: Helper function to generate the EFI_EVENT WaitList
-// This function is static and only used by WaitForInput, so no need for a prototype in menu.h
-static VOID GenerateWaitListInternal(OUT UINTN *WaitListLengthOut, OUT EFI_EVENT **WaitListOut) {
-    UINTN i;
-    UINTN PointerCount = pdCount(); // Get the number of active pointer devices
-
-    // WaitListLength for keyboard and pointers.
-    // The timer event will be added later by WaitForInput if TimeoutCentiseconds > 0.
-    *WaitListLengthOut = 1 + PointerCount; 
-    
-    *WaitListOut = AllocatePool(*WaitListLengthOut * sizeof(EFI_EVENT)); 
-    if (*WaitListOut == NULL) {
-        *WaitListLengthOut = 0;
-        LOG(2, LOG_LINE_NORMAL, L"GenerateWaitListInternal: Failed to allocate WaitList memory\n");
-        return;
-    }
-
-    (*WaitListOut)[0] = gST->ConIn->WaitForKey; // Keyboard event is always first
-
-    // Add pointer events to the list
-    for (i = 0; i < PointerCount; i++) {
-        (*WaitListOut)[1 + i] = pdWaitEvent(i); // Get the EFI_EVENT for each pointer device
-    }
-}
 // NEW: WaitForInput function
 // TimeoutCentiseconds: If > 0, waits for this duration in centiseconds, or until input.
 //                    If 0, waits indefinitely for keyboard/pointer input.
@@ -546,7 +521,6 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
     UINTN Item;
     UINT64 CurrentTimeMs = 0; // Use mock timer
     UINT64 LastInputMs = 0;   // Use mock timer
-    UINTN TimeSinceKeystroke = 0;
     UINTN ScreensaverTimeoutMs = 0;
     UINTN MenuTimeoutMs = 0;
     BOOLEAN InputDetectedThisIteration = FALSE;
@@ -609,7 +583,6 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
     // Initialize timing variables for the loop start using the mock timer
     CurrentTimeMs = GetCurrentMS_Mock();
     LastInputMs = CurrentTimeMs;
-    TimeSinceKeystroke = 0;
     ScreensaverTimeoutMs = GlobalConfig.ScreensaverTime * 1000;
 
 
@@ -737,7 +710,6 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
         // --- Timer and Screensaver Logic ---
         if (InputDetectedThisIteration) {
             LastInputMs = CurrentTimeMs; // CurrentTimeMs is already updated by WaitForInput
-            TimeSinceKeystroke = 0;
 
             // If any input detected, disable the timer permanently for this menu session
             if (HaveTimeout) {
@@ -789,13 +761,10 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                         SaveScreen();
                         State.PaintAll = TRUE;
                         LastInputMs = CurrentTimeMs; // Reset after screensaver activation
-                        TimeSinceKeystroke = 0;
                         if (HaveTimeout) {
                            StyleFunc(Screen, &State, MENU_FUNCTION_PAINT_TIMEOUT, L"");
                         }
-                    } else {
-                        TimeSinceKeystroke = ElapsedSinceLastInputMs / 100;
-                    }
+                    } 
                 }
             } else {
                 LOG(3, LOG_LINE_NORMAL, L"No input, no timeout expired, or timer is permanently disabled. Just waiting.\n");
