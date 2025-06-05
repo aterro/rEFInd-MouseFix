@@ -177,7 +177,6 @@ State.Y = UGAHeight / 2;
 State.Press = FALSE;
 State.Holding = FALSE;
 }
-
 ////////////////////////////////////////////////////////////////////////////////
 // Returns whether or not any pointer devices are available
 ////////////////////////////////////////////////////////////////////////////////
@@ -286,7 +285,14 @@ EFI_STATUS pdUpdateState() {
             refit_call1_wrapper(gBS->Stall, 5 * 1000); // 5 millisecond (5000 microseconds)
         }
     }
-
+    // Failsafe: If no device reported a new state (Status is still EFI_NOT_READY),
+    // but the pointer system is generally considered active,
+    // force Status to EFI_SUCCESS to keep the pointer visible.
+    // This prevents external logic from deactivating the pointer system
+    // based on transient "Not Ready" reports.
+    if (EFI_ERROR(Status) && MouseTouchActive) {
+        Status = EFI_SUCCESS;
+    }
     State.Press = (LastHolding && !State.Holding);
     return Status; 
 #endif
