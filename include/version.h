@@ -13,6 +13,6 @@
 #ifndef __VERSION_H
 #define __VERSION_H
 
-#define REFIND_VERSION L"0.15.96 - Abz-MouseFix-Mod"
+#define REFIND_VERSION L"0.15.97 - Abz-MouseFix-Mod"
 
 #endif
