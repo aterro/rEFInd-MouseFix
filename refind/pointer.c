@@ -218,11 +218,8 @@ EFI_STATUS pdUpdateState() {
         return EFI_NOT_READY;
     }
 
-    // Gating check for MouseTouchActive: If pointer system isn't deemed "active",
-    // don't try to get state.
-    // This is crucial for stability.
-    if (!MouseTouchActive) { // Add this gate
-        return EFI_NOT_READY; // Return that no state is ready if not active
+    if (!MouseTouchActive) {
+        return EFI_NOT_READY;
     }
 
     EFI_STATUS Status = EFI_NOT_READY;
@@ -230,78 +227,145 @@ EFI_STATUS pdUpdateState() {
     EFI_SIMPLE_POINTER_STATE SPointerState;
     BOOLEAN LastHolding = State.Holding;
 
+    // Variables for dynamic delay management
+    // These should persist across calls if you want the delay to "learn"
+    // and remember the last successful delay, or reset if you want it to re-evaluate
+    // each time the function is called.
+    // For "3 NOT_READY in a row", we need a counter that resets on success.
+
+    // Let's assume these are global or static to the function
+    // to preserve their state across multiple calls to pdUpdateState().
+    // If they are local to this function, they will reset on each call,
+    // and the "3 in a row" logic won't work as intended over time.
+    static UINTN CurrentEffectiveDelay = 0; // The delay we actually apply 
+    static UINTN NotReadyConsecutiveCount = 0; // Counter for consecutive EFI_NOT_READY 
+
+    // Configuration for the dynamic delay
+    const UINTN DelayIncrement = 1 * 1000; // 1 millisecond increment 
+    const UINTN MaxTotalDelay = 50 * 1000; // 50 milliseconds max total delay 
+    const UINTN TriggerNotReadyCount = 3; // Number of consecutive NOT_READY before adding delay
+
     UINTN Index;
+    // --- Absolute Pointer Devices ---
     for(Index = 0; Index < NumAPointerDevices; Index++) {
         EFI_STATUS PointerStatus = refit_call2_wrapper(APointerProtocol[Index]->GetState, APointerProtocol[Index], &APointerState);
-        // if new state found and we haven't already found a new state
-        if(!EFI_ERROR(PointerStatus) && EFI_ERROR(Status)) {
-            Status = EFI_SUCCESS;
+
+        if (!EFI_ERROR(PointerStatus)) { 
+            // Successfully got state, reset consecutive NOT_READY counter
+            NotReadyConsecutiveCount = 0;
+            // Optionally, if a state is found, you might want to slightly reduce
+            // CurrentEffectiveDelay over time, or reset it. For simplicity,
+            // we'll just keep it at the last value that allowed a state.
+            // If you want to "wind down" the delay:
+            // if (CurrentEffectiveDelay > 0) CurrentEffectiveDelay -= DelayIncrement;
+            // if (CurrentEffectiveDelay < 0) CurrentEffectiveDelay = 0; // Cap at 0
+
+            if (EFI_ERROR(Status)) { // If we haven't already found a new state
+                Status = EFI_SUCCESS; 
 #ifdef EFI32
-            State.X = (UINTN)DivU64x64Remainder(APointerState.CurrentX * UGAWidth, APointerProtocol[Index]->Mode->AbsoluteMaxX, NULL);
-            State.Y = (UINTN)DivU64x64Remainder(APointerState.CurrentY * UGAHeight, APointerProtocol[Index]->Mode->AbsoluteMaxY, NULL);
+                State.X = (UINTN)DivU64x64Remainder(APointerState.CurrentX * UGAWidth, APointerProtocol[Index]->Mode->AbsoluteMaxX, NULL); 
+                State.Y = (UINTN)DivU64x64Remainder(APointerState.CurrentY * UGAHeight, APointerProtocol[Index]->Mode->AbsoluteMaxY, NULL); 
 #else
-            State.X = (APointerState.CurrentX * UGAWidth) / APointerProtocol[Index]->Mode->AbsoluteMaxX;
-            State.Y = (APointerState.CurrentY * UGAHeight) / APointerProtocol[Index]->Mode->AbsoluteMaxY;
+                State.X = (APointerState.CurrentX * UGAWidth) / APointerProtocol[Index]->Mode->AbsoluteMaxX; 
+                State.Y = (APointerState.CurrentY * UGAHeight) / APointerProtocol[Index]->Mode->AbsoluteMaxY; 
 #endif
-            State.Holding = (APointerState.ActiveButtons & EFI_ABSP_TouchActive);
-        } else if (PointerStatus == EFI_NOT_READY) { // NEW: Add stall for specific error
-            refit_call1_wrapper(gBS->Stall, 5 * 1000); // 5 millisecond (5000 microseconds)
+                State.Holding = (APointerState.ActiveButtons & EFI_ABSP_TouchActive); 
+            }
+        } else if (PointerStatus == EFI_NOT_READY) {
+            NotReadyConsecutiveCount++;
+
+            if (NotReadyConsecutiveCount >= TriggerNotReadyCount) {
+                // If we've hit the trigger, start or increment the delay
+                CurrentEffectiveDelay += DelayIncrement; 
+                if (CurrentEffectiveDelay > MaxTotalDelay) { // Cap delay 
+                    CurrentEffectiveDelay = MaxTotalDelay; 
+                }
+                refit_call1_wrapper(gBS->Stall, CurrentEffectiveDelay); 
+                // Reset consecutive count after applying delay to ensure
+                // we don't infinitely increase delay on subsequent NOT_READYs immediately
+                // but instead wait for another 3.
+                // Or, if you want it to keep increasing as long as it's NOT_READY,
+                // you would not reset this. Your call. For "3 in a row *then* stall",
+                // resetting makes sense, and then another 3 will trigger another stall.
+                NotReadyConsecutiveCount = 0; // Reset after a stall is applied
+            }
+            // If NotReadyConsecutiveCount is less than TriggerNotReadyCount, no stall here yet.
+        } else {
+            // Other error, reset counter and don't stall
+            NotReadyConsecutiveCount = 0;
+            // Maybe consider reducing CurrentEffectiveDelay here too if it's an error not related to NOT_READY
+            // if (CurrentEffectiveDelay > 0) CurrentEffectiveDelay = 0; // Or some default
         }
     }
+
+    // --- Simple Pointer Devices ---
+    // Reset consecutive counter for this loop, if you want independent tracking
+    // If you want a *single* counter for both types, keep it global/static and don't reset here.
+    // For the "3 NOT_READY in a row" across *any* device, the static/global counter works.
+    // If you want each type to have its own "3 NOT_READY in a row" logic, you'd need another static var.
+    // Assuming you want a single "global" NOT_READY counter for the entire function:
+    // NotReadyConsecutiveCount does NOT get reset here.
+
     for(Index = 0; Index < NumSPointerDevices; Index++) {
-        EFI_STATUS PointerStatus = refit_call2_wrapper(SPointerProtocol[Index]->GetState, SPointerProtocol[Index], &SPointerState);
-        // if new state found and we haven't already found a new state
-        if(!EFI_ERROR(PointerStatus) && EFI_ERROR(Status)) {
-            Status = EFI_SUCCESS;
-            INT32 TargetX = 0;
-            INT32 TargetY = 0;
+        EFI_STATUS PointerStatus = refit_call2_wrapper(SPointerProtocol[Index]->GetState, SPointerProtocol[Index], &SPointerState); 
+
+        if (!EFI_ERROR(PointerStatus)) { 
+            NotReadyConsecutiveCount = 0;
+            // Optionally wind down CurrentEffectiveDelay here too if desired
+            if (EFI_ERROR(Status)) { // If we haven't already found a new state
+                Status = EFI_SUCCESS; 
+                INT32 TargetX = 0;
+                INT32 TargetY = 0;
 
 #ifdef EFI32
-            TargetX = State.X + (INTN)DivS64x64Remainder(SPointerState.RelativeMovementX * GlobalConfig.MouseSpeed, SPointerProtocol[Index]->Mode->ResolutionX, NULL);
-            TargetY = State.Y + (INTN)DivS64x64Remainder(SPointerState.RelativeMovementY * GlobalConfig.MouseSpeed, SPointerProtocol[Index]->Mode->ResolutionY, NULL);
+                TargetX = State.X + (INTN)DivS64x64Remainder(SPointerState.RelativeMovementX * GlobalConfig.MouseSpeed, SPointerProtocol[Index]->Mode->ResolutionX, NULL);
+                TargetY = State.Y + (INTN)DivS64x64Remainder(SPointerState.RelativeMovementY * GlobalConfig.MouseSpeed, SPointerProtocol[Index]->Mode->ResolutionY, NULL);
 #else
-            TargetX = State.X + SPointerState.RelativeMovementX * GlobalConfig.MouseSpeed / SPointerProtocol[Index]->Mode->ResolutionX;
-            TargetY = State.Y + SPointerState.RelativeMovementY * GlobalConfig.MouseSpeed / SPointerProtocol[Index]->Mode->ResolutionY;
+                TargetX = State.X + SPointerState.RelativeMovementX * GlobalConfig.MouseSpeed / SPointerProtocol[Index]->Mode->ResolutionX; 
+                TargetY = State.Y + SPointerState.RelativeMovementY * GlobalConfig.MouseSpeed / SPointerProtocol[Index]->Mode->ResolutionY; 
 #endif
 
-            // Apply boundary checks immediately for updated values
-            if(TargetX < 0) {
-                State.X = 0;
-            } else if(TargetX >= UGAWidth) {
-                State.X = UGAWidth - 1;
-            } else {
-                State.X = TargetX;
-            }
+                if(TargetX < 0) {
+                    State.X = 0; 
+                } else if(TargetX >= UGAWidth) {
+                    State.X = UGAWidth - 1; 
+                } else {
+                    State.X = TargetX; 
+                }
 
-            if(TargetY < 0) {
-                State.Y = 0;
-            } else if(TargetY >= UGAHeight) {
-                State.Y = UGAHeight - 1;
-            } else {
-                State.Y = TargetY;
-            }
+                if(TargetY < 0) {
+                    State.Y = 0; 
+                } else if(TargetY >= UGAHeight) {
+                    State.Y = UGAHeight - 1; 
+                } else {
+                    State.Y = TargetY; 
+                }
 
-            State.Holding = SPointerState.LeftButton;
-        } else if (PointerStatus == EFI_NOT_READY) { // NEW: Add stall for specific error
-            refit_call1_wrapper(gBS->Stall, 5 * 1000); // 5 millisecond (5000 microseconds)
+                State.Holding = SPointerState.LeftButton; 
+            }
+        } else if (PointerStatus == EFI_NOT_READY) {
+            NotReadyConsecutiveCount++;
+
+            if (NotReadyConsecutiveCount >= TriggerNotReadyCount) {
+                CurrentEffectiveDelay += DelayIncrement; 
+                if (CurrentEffectiveDelay > MaxTotalDelay) { 
+                    CurrentEffectiveDelay = MaxTotalDelay;
+                }
+                refit_call1_wrapper(gBS->Stall, CurrentEffectiveDelay);
+                NotReadyConsecutiveCount = 0; // Reset after a stall is applied
+            }
+        } else {
+            NotReadyConsecutiveCount = 0;
+            // if (CurrentEffectiveDelay > 0) CurrentEffectiveDelay = 0;
         }
     }
-    State.Press = (!LastHolding && State.Holding); // Calculates if the button *just went down* (a new press)
 
-    // Failsafe: If no device reported a new state (Status is still EFI_NOT_READY),
-    // but the pointer system is generally considered active,
-    // force Status to EFI_SUCCESS to keep the pointer visible and prevent external logic
-    // from deactivating the pointer system based on transient "Not Ready" reports.
-    // In this scenario, State.X and State.Y retain their last successfully updated values.
-    if (Status == EFI_NOT_READY && MouseTouchActive) {
-        // Ensure pointer coordinates remain within screen bounds, even if no new update occurred
-        // This is crucial to prevent the pointer from jumping to out-of-bounds positions
-        // if the last valid update was near or beyond the screen edge and then NOT_READY happens.
-        if (State.X < 0) State.X = 0;
-        if (State.X >= UGAWidth) State.X = UGAWidth - 1;
-        if (State.Y < 0) State.Y = 0;
-        if (State.Y >= UGAHeight) State.Y = UGAHeight - 1;
-        return EFI_SUCCESS; // Signal success, indicating pointer is still valid and active
+    State.Press = (LastHolding && !State.Holding); // Your updated click definition
+
+    if (Status == EFI_NOT_READY && MouseTouchActive) { 
+        // Boundary checks for State.X and State.Y are applied where X/Y are updated.
+        // No need to re-check them here as they retain last valid values. 
+        return EFI_SUCCESS;
     } else {
         return Status;
     }
