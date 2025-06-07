@@ -233,18 +233,18 @@ EFI_STATUS pdUpdateState() {
     UINTN EfiMajorVersion = EfiRevision >> 16;
     UINTN EfiMinorVersion = EfiRevision & ((1 << 16) - 1);
 
-    // Define the threshold for comparison (EFI 2.70)
-    // Note: EFI revisions are often represented as Major.Minor * 10, so 2.70 is 270.
-    // However, the bit-shifting method (Major << 16 | Minor) means 2.70 is actually 0x00020046 (2 << 16 | 70).
+    // Define the threshold for comparison (EFI 2.50)
+    // Note: EFI revisions are often represented as Major.Minor * 10, so 2.50 is 250.
+    // However, the bit-shifting method (Major << 16 | Minor) means 2.50 is actually 0x00020032 (2 << 16 | 50).
     // For direct comparison, it's safer to compare major and minor parts separately,
-    // or convert the target revision (2.70) into the same 32-bit format.
+    // or convert the target revision (2.50) into the same 32-bit format.
     // Let's use separate comparison for clarity and correctness.
     BOOLEAN AddStall = FALSE;
-    // Check if EFI Revision is less than 2.70
+    // Check if EFI Revision is less than 2.50
     // This translates to:
     // If Major < 2, or
-    // If Major == 2 AND Minor < 70
-    if (EfiMajorVersion < 2 || (EfiMajorVersion == 2 && EfiMinorVersion < 70)) {
+    // If Major == 2 AND Minor < 50
+    if (EfiMajorVersion < 2 || (EfiMajorVersion == 2 && EfiMinorVersion < 50)) {
         AddStall = TRUE;
     }
 
@@ -275,7 +275,7 @@ EFI_STATUS pdUpdateState() {
 #endif
             State.Holding = (APointerState.ActiveButtons & EFI_ABSP_TouchActive);
         } else if (PointerStatus == EFI_NOT_READY) {
-            // Apply stall only if AddStall is TRUE (i.e., revision < 2.70)
+            // Apply stall only if AddStall is TRUE (i.e., revision < 2.50)
             if (StallTime > 0) {
                 refit_call1_wrapper(gBS->Stall, StallTime);
             }
@@ -316,7 +316,7 @@ EFI_STATUS pdUpdateState() {
 
             State.Holding = SPointerState.LeftButton;
         } else if (PointerStatus == EFI_NOT_READY) {
-            // Apply stall only if AddStall is TRUE (i.e., revision < 2.70)
+            // Apply stall only if AddStall is TRUE (i.e., revision < 2.50)
             if (StallTime > 0) {
                 refit_call1_wrapper(gBS->Stall, StallTime);
             }
