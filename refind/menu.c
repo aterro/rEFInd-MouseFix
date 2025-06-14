@@ -980,9 +980,10 @@ Item = FindMainMenuItem(Screen, &State, CurrentPointerState.X, CurrentPointerSta
                 switch (Item) {
 case POINTER_NO_ITEM:
 if(DrawSelection) {
-DrawSelection = FALSE;
-State.PaintSelection = FALSE;
-LOG(3, LOG_LINE_NORMAL, L"Pointer: No item, deselecting.\n");
+                        DrawSelection = FALSE;
+                        State.PaintSelection = FALSE;
+                        State.PaintAll = TRUE;
+                        if(ClickDetected) { MenuExit = MENU_EXIT_ZERO;}
 }
 break; 
 case POINTER_LEFT_ARROW:
@@ -1000,8 +1001,10 @@ State.PaintAll = TRUE; State.PaintSelection = TRUE; LOG(3, LOG_LINE_NORMAL, L"Po
 State.PaintSelection = TRUE; }
                         break;
 default:
-                        if (!DrawSelection || Item != State.CurrentSelection) {
+                       if (!DrawSelection || Item != State.CurrentSelection) {
                             DrawSelection = TRUE;
+                            State.PaintSelection = TRUE;
+                            State.PaintAll = TRUE;
 State.PaintSelection = TRUE; State.CurrentSelection = Item;
                             LOG(3, LOG_LINE_NORMAL, L"Pointer: Hovering item %d.\n", Item);
 }
