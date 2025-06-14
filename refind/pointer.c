@@ -53,11 +53,11 @@ BOOLEAN MouseTouchActive = TRUE;
 ////////////////////////////////////////////////////////////////////////////////
 VOID pdInitialize() {
     pdCleanup();
-    // just in case
+// just in case
 
     if (!(GlobalConfig.EnableMouse || GlobalConfig.EnableTouch)) {
         MouseTouchActive = FALSE;
-        // Set to FALSE if no pointer config is enabled 
+// Set to FALSE if no pointer config is enabled 
         return;
     }
 
@@ -72,12 +72,13 @@ VOID pdInitialize() {
             // Open the protocol on the handle
             EFI_STATUS status = refit_call6_wrapper(gBS->OpenProtocol, APointerHandles[Index], &APointerGuid,
                                                      (VOID **) &APointerProtocol[NumAPointerDevices],
-                                                     SelfImageHandle, NULL, EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+   
+                                                    SelfImageHandle, NULL, EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
             if (status == EFI_SUCCESS) {
                 NumAPointerDevices++;
-                // NEW: Add a small delay here if needed for absolute pointers (e.g., touchscreens)
-                refit_call1_wrapper(gBS->Stall, 5 * 1000);
-                // 5 milliseconds (5000 microseconds)
+// NEW: Add a small delay here if needed for absolute pointers (e.g., touchscreens)
+                 refit_call1_wrapper(gBS->Stall, 5 * 1000);
+// 5 milliseconds (5000 microseconds)
             }
         }
     } else {
@@ -92,26 +93,14 @@ VOID pdInitialize() {
         SPointerProtocol = AllocatePool(sizeof(EFI_SIMPLE_POINTER_PROTOCOL*) * NumPointerHandles);
         UINTN Index;
         for(Index = 0; Index < NumPointerHandles; Index++) {
-            EFI_STATUS status = EFI_NOT_READY; // Initialize status for the retry loop
-            for (UINTN retry = 0; retry < 3; retry++) { // 3 trials for OpenProtocol
-                // Open the protocol on the handle
-                status = refit_call6_wrapper(gBS->OpenProtocol, SPointerHandles[Index], &SPointerGuid, (VOID **) &SPointerProtocol[NumSPointerDevices], SelfImageHandle, NULL, EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
-                if (status == EFI_SUCCESS) {
-                    break; // Success, exit retry loop
-                }
-                // Add a small stall before the next retry attempt
-                refit_call1_wrapper(gBS->Stall, 10 * 1000); // 10 milliseconds (10000 microseconds)
-            }
-
+            // Open the protocol on the handle
+            EFI_STATUS status = refit_call6_wrapper(gBS->OpenProtocol, SPointerHandles[Index], &SPointerGuid, (VOID **) &SPointerProtocol[NumSPointerDevices], SelfImageHandle, NULL, EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
             if (status == EFI_SUCCESS) {
                 NumSPointerDevices++;
-                // Existing stall after successfully opening the protocol (either first attempt or a retry)
+// NEW: Add a small delay after successfully opening the protocol for each simple pointer device
                 refit_call1_wrapper(gBS->Stall, 5 * 1000);
-                // 5 milliseconds (5000 microseconds)
-            } else {
-                // Handle case where protocol could not be opened after all retries
-                // (e.g., GlobalConfig.EnableMouse = FALSE, or logging specific errors)
-            }
+// 5 milliseconds (5000 microseconds)
+            } 
         }
     } else {
         GlobalConfig.EnableMouse = FALSE;
@@ -119,17 +108,19 @@ VOID pdInitialize() {
     // Existing 0.5-second general delay for all pointer drivers/firmware to settle
     if (NumAPointerDevices > 0 || NumSPointerDevices > 0) { // Check if any devices were successfully opened 
         refit_call1_wrapper(gBS->Stall, 500000);
-        // 500,000 microseconds = 0.5 seconds 
+// 500,000 microseconds = 0.5 seconds 
     }
-    PointerAvailable = (NumAPointerDevices + NumSPointerDevices > 0);
-    // Load mouse icon - More robust loading (similar to RefindPlus logic)
+    // --- START OF SURGICAL FIX (from refindplus logic) ---
+    // Set PointerAvailable: True if any pointer device was successfully opened.
+    PointerAvailable = (NumAPointerDevices > 0 || NumSPointerDevices > 0);
+
+    // Set MouseTouchActive: True if either mouse or touch config is enabled AND a pointer device is available.
+    MouseTouchActive = (GlobalConfig.EnableMouse || GlobalConfig.EnableTouch) ? PointerAvailable : FALSE;
+    // --- END OF SURGICAL FIX ---
+// Load mouse icon - More robust loading (similar to RefindPlus logic)
     if (GlobalConfig.EnableMouse) {
         MouseImage = BuiltinIcon(BUILTIN_ICON_MOUSE);
     }
-
-    // Set MouseTouchActive: True if either touch (if enabled) or mouse (if enabled) devices are found.
-    MouseTouchActive = (NumAPointerDevices > 0 && GlobalConfig.EnableTouch) ||
-                       (NumSPointerDevices > 0 && GlobalConfig.EnableMouse);
 }
 ////////////////////////////////////////////////////////////////////////////////
 // Frees allocated memory and closes pointer protocols
@@ -187,7 +178,6 @@ State.Y = UGAHeight / 2;
 State.Press = FALSE;
 State.Holding = FALSE;
 }
-
 ////////////////////////////////////////////////////////////////////////////////
 // Returns whether or not any pointer devices are available
 ////////////////////////////////////////////////////////////////////////////////
@@ -228,47 +218,86 @@ EFI_STATUS pdUpdateState() {
         return EFI_NOT_READY;
     }
 
-    if (!MouseTouchActive) {
-        return EFI_NOT_READY;
+    // Gating check for MouseTouchActive: If pointer system isn't deemed "active",
+    // don't try to get state.
+    // This is crucial for stability.
+    if (!MouseTouchActive) { // Add this gate
+        return EFI_NOT_READY; // Return that no state is ready if not active
     }
+
+    // 1. Get major revision
+    // 2. Get minor revision
+    // 3. Create a new revision number (implicitly by comparing major/minor)
+    //    We will directly use ST->Hdr.Revision.
+    UINT32 EfiRevision = ST->Hdr.Revision;
+    UINTN EfiMajorVersion = EfiRevision >> 16;
+    UINTN EfiMinorVersion = EfiRevision & ((1 << 16) - 1);
+
+    // Define the threshold for comparison (EFI 2.50)
+    // Note: EFI revisions are often represented as Major.Minor * 10, so 2.50 is 250.
+    // However, the bit-shifting method (Major << 16 | Minor) means 2.50 is actually 0x00020032 (2 << 16 | 50).
+    // For direct comparison, it's safer to compare major and minor parts separately,
+    // or convert the target revision (2.50) into the same 32-bit format.
+    // Let's use separate comparison for clarity and correctness.
+    BOOLEAN AddStall = FALSE;
+    // Check if EFI Revision is less than 2.50
+    // This translates to:
+    // If Major < 2, or
+    // If Major == 2 AND Minor < 50
+    if (EfiMajorVersion < 2 || (EfiMajorVersion == 2 && EfiMinorVersion < 50)) {
+        AddStall = TRUE;
+    }
+
+    // Determine the stall time based on the EFI Revision
+    UINTN StallTime = 0;
+    if (AddStall) {
+        StallTime = 5 * 1000; // 5 milliseconds (5000 microseconds)
+    }
+    // Else, StallTime remains 0, meaning no stall will be applied
 
     EFI_STATUS Status = EFI_NOT_READY;
     EFI_ABSOLUTE_POINTER_STATE APointerState;
     EFI_SIMPLE_POINTER_STATE SPointerState;
-    BOOLEAN LastHolding = State.Holding; 
+    BOOLEAN LastHolding = State.Holding;
 
     UINTN Index;
     for(Index = 0; Index < NumAPointerDevices; Index++) {
         EFI_STATUS PointerStatus = refit_call2_wrapper(APointerProtocol[Index]->GetState, APointerProtocol[Index], &APointerState);
-        if(!EFI_ERROR(PointerStatus) && EFI_ERROR(Status)) { 
+        // if new state found and we haven't already found a new state
+        if(!EFI_ERROR(PointerStatus) && EFI_ERROR(Status)) {
             Status = EFI_SUCCESS;
 #ifdef EFI32
             State.X = (UINTN)DivU64x64Remainder(APointerState.CurrentX * UGAWidth, APointerProtocol[Index]->Mode->AbsoluteMaxX, NULL);
-            State.Y = (UINTN)DivU64x64Remainder(APointerState.CurrentY * UGAHeight, APointerProtocol[Index]->Mode->AbsoluteMaxY, NULL); 
+            State.Y = (UINTN)DivU64x64Remainder(APointerState.CurrentY * UGAHeight, APointerProtocol[Index]->Mode->AbsoluteMaxY, NULL);
 #else
             State.X = (APointerState.CurrentX * UGAWidth) / APointerProtocol[Index]->Mode->AbsoluteMaxX;
-            State.Y = (APointerState.CurrentY * UGAHeight) / APointerProtocol[Index]->Mode->AbsoluteMaxY; 
+            State.Y = (APointerState.CurrentY * UGAHeight) / APointerProtocol[Index]->Mode->AbsoluteMaxY;
 #endif
             State.Holding = (APointerState.ActiveButtons & EFI_ABSP_TouchActive);
         } else if (PointerStatus == EFI_NOT_READY) {
-            refit_call1_wrapper(gBS->Stall, 5 * 1000);
+            // Apply stall only if AddStall is TRUE (i.e., revision < 2.50)
+            if (StallTime > 0) {
+                refit_call1_wrapper(gBS->Stall, StallTime);
+            }
         }
     }
-    for(Index = 0; Index < NumSPointerDevices; Index++) { 
+    for(Index = 0; Index < NumSPointerDevices; Index++) {
         EFI_STATUS PointerStatus = refit_call2_wrapper(SPointerProtocol[Index]->GetState, SPointerProtocol[Index], &SPointerState);
-        if(!EFI_ERROR(PointerStatus) && EFI_ERROR(Status)) { 
+        // if new state found and we haven't already found a new state
+        if(!EFI_ERROR(PointerStatus) && EFI_ERROR(Status)) {
             Status = EFI_SUCCESS;
-            INT32 TargetX = 0; 
-            INT32 TargetY = 0; 
+            INT32 TargetX = 0;
+            INT32 TargetY = 0;
 
 #ifdef EFI32
             TargetX = State.X + (INTN)DivS64x64Remainder(SPointerState.RelativeMovementX * GlobalConfig.MouseSpeed, SPointerProtocol[Index]->Mode->ResolutionX, NULL);
-            TargetY = State.Y + (INTN)DivS64x64Remainder(SPointerState.RelativeMovementY * GlobalConfig.MouseSpeed, SPointerProtocol[Index]->Mode->ResolutionY, NULL); 
+            TargetY = State.Y + (INTN)DivS64x64Remainder(SPointerState.RelativeMovementY * GlobalConfig.MouseSpeed, SPointerProtocol[Index]->Mode->ResolutionY, NULL);
 #else
             TargetX = State.X + SPointerState.RelativeMovementX * GlobalConfig.MouseSpeed / SPointerProtocol[Index]->Mode->ResolutionX;
-            TargetY = State.Y + SPointerState.RelativeMovementY * GlobalConfig.MouseSpeed / SPointerProtocol[Index]->Mode->ResolutionY; 
+            TargetY = State.Y + SPointerState.RelativeMovementY * GlobalConfig.MouseSpeed / SPointerProtocol[Index]->Mode->ResolutionY;
 #endif
 
+            // Apply boundary checks immediately for updated values
             if(TargetX < 0) {
                 State.X = 0;
             } else if(TargetX >= UGAWidth) {
@@ -284,13 +313,34 @@ EFI_STATUS pdUpdateState() {
             } else {
                 State.Y = TargetY;
             }
-            State.Holding = SPointerState.LeftButton;
-        } else if (PointerStatus == EFI_NOT_READY) {  refit_call1_wrapper(gBS->Stall, 10 * 1000); 
-      }
-    }
 
-    State.Press = (LastHolding && !State.Holding);
-    return Status; 
+            State.Holding = SPointerState.LeftButton;
+        } else if (PointerStatus == EFI_NOT_READY) {
+            // Apply stall only if AddStall is TRUE (i.e., revision < 2.50)
+            if (StallTime > 0) {
+                refit_call1_wrapper(gBS->Stall, StallTime);
+            }
+        }
+    }
+    State.Press = (!LastHolding && State.Holding); // Calculates if the button *just went down* (a new press)
+
+    // Failsafe: If no device reported a new state (Status is still EFI_NOT_READY),
+    // but the pointer system is generally considered active,
+    // force Status to EFI_SUCCESS to keep the pointer visible and prevent external logic
+    // from deactivating the pointer system based on transient "Not Ready" reports.
+    // In this scenario, State.X and State.Y retain their last successfully updated values.
+    if (Status == EFI_NOT_READY && MouseTouchActive) {
+        // Ensure pointer coordinates remain within screen bounds, even if no new update occurred
+        // This is crucial to prevent the pointer from jumping to out-of-bounds positions
+        // if the last valid update was near or beyond the screen edge and then NOT_READY happens.
+        if (State.X < 0) State.X = 0;
+        if (State.X >= UGAWidth) State.X = UGAWidth - 1;
+        if (State.Y < 0) State.Y = 0;
+        if (State.Y >= UGAHeight) State.Y = UGAHeight - 1;
+        return EFI_SUCCESS; // Signal success, indicating pointer is still valid and active
+    } else {
+        return Status;
+    }
 #endif
 }
 ////////////////////////////////////////////////////////////////////////////////
