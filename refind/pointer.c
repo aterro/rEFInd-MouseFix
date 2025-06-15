@@ -218,54 +218,39 @@ EFI_STATUS pdUpdateState() {
         return EFI_NOT_READY;
     }
 
-    // Gating check for MouseTouchActive: If pointer system isn't deemed "active",
-    // don't try to get state.
-    // This is crucial for stability.
-    if (!MouseTouchActive) { // Add this gate
-        return EFI_NOT_READY; // Return that no state is ready if not active
+    if (!MouseTouchActive) {
+        return EFI_NOT_READY;
     }
 
-    // 1. Get major revision
-    // 2. Get minor revision
-    // 3. Create a new revision number (implicitly by comparing major/minor)
-    //    We will directly use ST->Hdr.Revision.
-    UINT32 EfiRevision = ST->Hdr.Revision;
-    UINTN EfiMajorVersion = EfiRevision >> 16;
-    UINTN EfiMinorVersion = EfiRevision & ((1 << 16) - 1);
-
-    // Define the threshold for comparison (EFI 2.50)
-    // Note: EFI revisions are often represented as Major.Minor * 10, so 2.50 is 250.
-    // However, the bit-shifting method (Major << 16 | Minor) means 2.50 is actually 0x00020032 (2 << 16 | 50).
-    // For direct comparison, it's safer to compare major and minor parts separately,
-    // or convert the target revision (2.50) into the same 32-bit format.
-    // Let's use separate comparison for clarity and correctness.
+    UINTN EfiMajorVersion = ST->Hdr.Revision >> 16;
+    UINTN EfiMinorVersion = ST->Hdr.Revision & ((1 << 16) - 1);
     BOOLEAN AddStall = FALSE;
-    // Check if EFI Revision is less than 2.50
-    // This translates to:
-    // If Major < 2, or
-    // If Major == 2 AND Minor < 50
     if (EfiMajorVersion < 2 || (EfiMajorVersion == 2 && EfiMinorVersion < 50)) {
         AddStall = TRUE;
     }
 
-    // Determine the stall time based on the EFI Revision
     UINTN StallTime = 0;
     if (AddStall) {
-        StallTime = 5 * 1000; // 5 milliseconds (5000 microseconds)
+        StallTime = 5 * 1000;
     }
-    // Else, StallTime remains 0, meaning no stall will be applied
 
-    EFI_STATUS Status = EFI_NOT_READY;
+    EFI_STATUS Status = EFI_NOT_READY; // Overall status of pointer update
     EFI_ABSOLUTE_POINTER_STATE APointerState;
-    EFI_SIMPLE_POINTER_STATE SPointerState;
-    BOOLEAN LastHolding = State.Holding;
+    // Declared here, but will be used as SPointerStateLocal inside the loop for clarity and safety.
+    // EFI_SIMPLE_POINTER_STATE SPointerState; // Original declaration, we'll use a local variable inside the loop.
+    BOOLEAN LastHolding = State.Holding; // Capture previous holding state for 'Press' calculation
+
+    // IMPORTANT: Reset State.Holding at the beginning of each update cycle to accumulate new state.
+    // This ensures State.Holding starts fresh and accurately reflects current physical state from all devices.
+    State.Holding = FALSE;
 
     UINTN Index;
+    // --- ABSOLUTE POINTERS (Touchscreens) ---
     for(Index = 0; Index < NumAPointerDevices; Index++) {
         EFI_STATUS PointerStatus = refit_call2_wrapper(APointerProtocol[Index]->GetState, APointerProtocol[Index], &APointerState);
-        // if new state found and we haven't already found a new state
+        // if new state found and we haven't already found a new state (i.e., this is the first active pointer)
         if(!EFI_ERROR(PointerStatus) && EFI_ERROR(Status)) {
-            Status = EFI_SUCCESS;
+            Status = EFI_SUCCESS; // Mark overall status as success due to this active absolute pointer
 #ifdef EFI32
             State.X = (UINTN)DivU64x64Remainder(APointerState.CurrentX * UGAWidth, APointerProtocol[Index]->Mode->AbsoluteMaxX, NULL);
             State.Y = (UINTN)DivU64x64Remainder(APointerState.CurrentY * UGAHeight, APointerProtocol[Index]->Mode->AbsoluteMaxY, NULL);
@@ -273,7 +258,7 @@ EFI_STATUS pdUpdateState() {
             State.X = (APointerState.CurrentX * UGAWidth) / APointerProtocol[Index]->Mode->AbsoluteMaxX;
             State.Y = (APointerState.CurrentY * UGAHeight) / APointerProtocol[Index]->Mode->AbsoluteMaxY;
 #endif
-            State.Holding = (APointerState.ActiveButtons & EFI_ABSP_TouchActive);
+            State.Holding = (APointerState.ActiveButtons & EFI_ABSP_TouchActive); // Set holding from this device
         } else if (PointerStatus == EFI_NOT_READY) {
             // Apply stall only if AddStall is TRUE (i.e., revision < 2.50)
             if (StallTime > 0) {
@@ -281,40 +266,58 @@ EFI_STATUS pdUpdateState() {
             }
         }
     }
+
+    // --- SIMPLE POINTERS (Mice) ---
     for(Index = 0; Index < NumSPointerDevices; Index++) {
-        EFI_STATUS PointerStatus = refit_call2_wrapper(SPointerProtocol[Index]->GetState, SPointerProtocol[Index], &SPointerState);
-        // if new state found and we haven't already found a new state
-        if(!EFI_ERROR(PointerStatus) && EFI_ERROR(Status)) {
-            Status = EFI_SUCCESS;
-            INT32 TargetX = 0;
-            INT32 TargetY = 0;
+        EFI_SIMPLE_POINTER_STATE SPointerStateLocal; // Use a local variable for the simple pointer state
+        EFI_STATUS PointerStatus = refit_call2_wrapper(SPointerProtocol[Index]->GetState, SPointerProtocol[Index], &SPointerStateLocal); // Corrected SPointerProtocol
 
+        if (!EFI_ERROR(PointerStatus)) { // GetState was successful for this simple pointer device
+            BOOLEAN hasMovement = SPointerStateLocal.RelativeMovementX != 0 || SPointerStateLocal.RelativeMovementY != 0;
+            BOOLEAN currentSimplePointerPress = SPointerStateLocal.LeftButton || SPointerStateLocal.RightButton;
+
+            if (hasMovement) { // If there's movement from this device
+                if (EFI_ERROR(Status)) { // Only set Status to SUCCESS if no prior active device (absolute or simple) did
+                    Status = EFI_SUCCESS;
+                }
+                // Update X, Y based on movement (accumulate)
 #ifdef EFI32
-            TargetX = State.X + (INTN)DivS64x64Remainder(SPointerState.RelativeMovementX * GlobalConfig.MouseSpeed, SPointerProtocol[Index]->Mode->ResolutionX, NULL);
-            TargetY = State.Y + (INTN)DivS64x64Remainder(SPointerState.RelativeMovementY * GlobalConfig.MouseSpeed, SPointerProtocol[Index]->Mode->ResolutionY, NULL);
+                INT32 TargetX = State.X + (INTN)DivS64x64Remainder(SPointerStateLocal.RelativeMovementX * GlobalConfig.MouseSpeed, SPointerProtocol[Index]->Mode->ResolutionX, NULL);
+                INT32 TargetY = State.Y + (INTN)DivS64x64Remainder(SPointerStateLocal.RelativeMovementY * GlobalConfig.MouseSpeed, SPointerProtocol[Index]->Mode->ResolutionY, NULL);
 #else
-            TargetX = State.X + SPointerState.RelativeMovementX * GlobalConfig.MouseSpeed / SPointerProtocol[Index]->Mode->ResolutionX;
-            TargetY = State.Y + SPointerState.RelativeMovementY * GlobalConfig.MouseSpeed / SPointerProtocol[Index]->Mode->ResolutionY;
+                INT32 TargetX = State.X + SPointerStateLocal.RelativeMovementX * GlobalConfig.MouseSpeed / SPointerProtocol[Index]->Mode->ResolutionX;
+                INT32 TargetY = State.Y + SPointerStateLocal.RelativeMovementY * GlobalConfig.MouseSpeed / SPointerProtocol[Index]->Mode->ResolutionY;
 #endif
+                // Apply boundary checks immediately for updated values
+                if(TargetX < 0) {
+                    State.X = 0;
+                } else if(TargetX >= UGAWidth) {
+                    State.X = UGAWidth - 1;
+                } else {
+                    State.X = TargetX;
+                }
 
-            // Apply boundary checks immediately for updated values
-            if(TargetX < 0) {
-                State.X = 0;
-            } else if(TargetX >= UGAWidth) {
-                State.X = UGAWidth - 1;
-            } else {
-                State.X = TargetX;
+                if(TargetY < 0) {
+                    State.Y = 0;
+                } else if(TargetY >= UGAHeight) {
+                    State.Y = UGAHeight - 1;
+                } else {
+                    State.Y = TargetY;
+                }
+            }
+            
+            // This is the crucial part for non-moving clicks:
+            // ALWAYS OR the current simple pointer's press state into State.Holding.
+            // This ensures State.Holding reflects *any* button press from any simple pointer device,
+            // regardless of movement, accumulated from all simple pointers.
+            State.Holding = State.Holding || currentSimplePointerPress;
+
+            // If a button is pressed on this device, even without movement, we should signal overall success.
+            // This ensures `State.Press` is calculated later and `pdUpdateState` returns `EFI_SUCCESS`.
+            if (currentSimplePointerPress && EFI_ERROR(Status)) {
+                Status = EFI_SUCCESS; // Signal overall success due to a button press from this device
             }
 
-            if(TargetY < 0) {
-                State.Y = 0;
-            } else if(TargetY >= UGAHeight) {
-                State.Y = UGAHeight - 1;
-            } else {
-                State.Y = TargetY;
-            }
-
-            State.Holding = SPointerState.LeftButton;
         } else if (PointerStatus == EFI_NOT_READY) {
             // Apply stall only if AddStall is TRUE (i.e., revision < 2.50)
             if (StallTime > 0) {
@@ -322,22 +325,21 @@ EFI_STATUS pdUpdateState() {
             }
         }
     }
-    State.Press = (!LastHolding && State.Holding); // Calculates if the button *just went down* (a new press)
+    
+    // Calculates if the button *just went down* (a new press)
+    State.Press = (!LastHolding && State.Holding);
 
     // Failsafe: If no device reported a new state (Status is still EFI_NOT_READY),
     // but the pointer system is generally considered active,
     // force Status to EFI_SUCCESS to keep the pointer visible and prevent external logic
     // from deactivating the pointer system based on transient "Not Ready" reports.
-    // In this scenario, State.X and State.Y retain their last successfully updated values.
     if (Status == EFI_NOT_READY && MouseTouchActive) {
         // Ensure pointer coordinates remain within screen bounds, even if no new update occurred
-        // This is crucial to prevent the pointer from jumping to out-of-bounds positions
-        // if the last valid update was near or beyond the screen edge and then NOT_READY happens.
         if (State.X < 0) State.X = 0;
         if (State.X >= UGAWidth) State.X = UGAWidth - 1;
         if (State.Y < 0) State.Y = 0;
         if (State.Y >= UGAHeight) State.Y = UGAHeight - 1;
-        return EFI_SUCCESS; // Signal success, indicating pointer is still valid and active
+        return EFI_SUCCESS;
     } else {
         return Status;
     }
