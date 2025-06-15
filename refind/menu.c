@@ -776,7 +776,7 @@ if (LoopWaitMs == 0 && (HaveTimeout || ScreensaverTimeoutMs > 0 || PointerEnable
 
         // 3. Call WaitForInput to wait for an event or the calculated timeout.
 LOG(3, LOG_LINE_NORMAL, L"Calling WaitForInput with LoopWaitMs = %u.\n", LoopWaitMs);
-        InputType = WaitForInput(LoopWaitMs);
+        InputType = WaitForInput(0);
         LOG(3, LOG_LINE_NORMAL, L"WaitForInput returned InputType: %u.\n", InputType);
 // CurrentTimeMs is updated by GetCurrentMS_Mock() at the start of the next loop iteration,
 // which now directly reflects real time passing during the WaitForInput call.
