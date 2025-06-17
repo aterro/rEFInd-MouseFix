@@ -13,6 +13,6 @@
 #ifndef __VERSION_H
 #define __VERSION_H
 
-#define REFIND_VERSION L"1.0.5-For-All"
+#define REFIND_VERSION L"1.0.6-For-All"
 
 #endif
