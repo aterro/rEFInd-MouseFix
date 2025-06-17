@@ -51,7 +51,7 @@ BdsLibConnectDevicePath (
   EFI_DEVICE_PATH_PROTOCOL  *RemainingDevicePath;
   EFI_DEVICE_PATH_PROTOCOL  *Next;
   EFI_HANDLE                Handle;
-  EFI_HANDLE                PreviousHandle;
+//  EFI_HANDLE                PreviousHandle;
   UINTN                     Size;
 
   if (DevicePathToConnect == NULL) {
@@ -87,7 +87,7 @@ BdsLibConnectDevicePath (
     //
     // Start the real work of connect with RemainingDevicePath
     //
-    PreviousHandle = NULL;
+//    PreviousHandle = NULL;
     do {
       //
       // Find the handle that best matches the Device Path. If it is only a
@@ -116,7 +116,7 @@ BdsLibConnectDevicePath (
 #endif
 
         if (!EFI_ERROR (Status)) {
-          PreviousHandle = Handle;
+//          PreviousHandle = Handle;
           //
           // Connect all drivers that apply to Handle and RemainingDevicePath,
           // the Recursive flag is FALSE so only one level will be expanded.

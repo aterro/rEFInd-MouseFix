@@ -525,7 +525,6 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
     UINTN MenuTimeoutMs = 0;
     BOOLEAN InputDetectedThisIteration = FALSE;
     EFI_STATUS PointerStatusLocal;
-//    EFI_STATUS PointerStatus = EFI_NOT_READY;
     POINTER_STATE CurrentPointerState = {0};
     POINTER_STATE PreviousPointerStateInMenu = {0};
     BOOLEAN PreviousPointerPressed = FALSE;
@@ -588,7 +587,6 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
 
 
     LOG(3, LOG_LINE_NORMAL, L"About to enter while() loop in RunGenericMenu()\n");
-    // REMOVE THIS STALL: refit_call1_wrapper(gBS->Stall, 5000);
 
     while (MenuExit == MENU_EXIT_ZERO) {
         CurrentTimeMs = GetCurrentMS_Mock(); // Update current time using the mock timer
@@ -874,7 +872,9 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                         break;
                     case POINTER_LEFT_ARROW:
                         if(ClickDetected) { UpdateScroll(&State, SCROLL_PAGE_UP);
-                           DrawSelection = FALSE; State.PaintAll = TRUE; State.PaintSelection = TRUE; LOG(3, LOG_LINE_NORMAL, L"Pointer: Left arrow clicked.\n");
+                           DrawSelection = FALSE; 
+                           State.PaintAll = TRUE; 
+                           State.PaintSelection = TRUE; LOG(3, LOG_LINE_NORMAL, L"Pointer: Left arrow clicked.\n");
                         }
                         if(DrawSelection) { DrawSelection = FALSE;
                             State.PaintSelection = TRUE; 
@@ -882,10 +882,14 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                         break;
                     case POINTER_RIGHT_ARROW:
                         if(ClickDetected) { UpdateScroll(&State, SCROLL_PAGE_DOWN);
-                           DrawSelection = FALSE; State.PaintAll = TRUE; State.PaintSelection = TRUE; LOG(3, LOG_LINE_NORMAL, L"Pointer: Right arrow clicked.\n");
+                           DrawSelection = FALSE; 
+                           State.PaintAll = TRUE; 
+                           State.PaintSelection = TRUE; LOG(3, LOG_LINE_NORMAL, L"Pointer: Right arrow clicked.\n");
                         }
-                        if(DrawSelection) { DrawSelection = FALSE;
-                            State.PaintSelection = TRUE; State.PaintAll = TRUE;}
+                        if(DrawSelection) { 
+                            DrawSelection = FALSE;
+                            State.PaintSelection = TRUE; 
+                            State.PaintAll = TRUE;}
                         break;
                     default:
                         if (!DrawSelection || Item != State.CurrentSelection) {
@@ -909,8 +913,6 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
         PreviousPointerStateInMenu = CurrentPointerState;
 
     } // END while (MenuExit == MENU_EXIT_ZERO) loop
-
-    // REMOVE THIS STALL: refit_call1_wrapper(gBS->Stall, 15000);
 
     // Reset pointerShouldBeVisible when exiting this menu instance
     pointerShouldBeVisible = FALSE;
@@ -1987,7 +1989,7 @@ UINTN RunMenu(IN REFIT_MENU_SCREEN *Screen, OUT REFIT_MENU_ENTRY **ChosenEntry)
         Style = GraphicsMenuStyle;
     return RunGenericMenu(Screen, Style, &DefaultEntry, ChosenEntry);
 }
-////////
+
 UINTN RunMainMenu(REFIT_MENU_SCREEN *Screen, CHAR16** DefaultSelection, REFIT_MENU_ENTRY **ChosenEntry)
 {
     MENU_STYLE_FUNC Style = TextMenuStyle;
@@ -2060,7 +2062,9 @@ UINTN RunMainMenu(REFIT_MENU_SCREEN *Screen, CHAR16** DefaultSelection, REFIT_ME
             MyFreePool(MenuTitle);
             MenuTitle = NULL; // Reset to NULL for next iteration
         }
-    }
+    refit_call1_wrapper(gBS->Stall, 15000); //  Add a 15ms delay for consistent frame rate and to fix click detection on old firmware
+
+    } // while (!MenuExit)
 
     if (ChosenEntry)
         *ChosenEntry = TempChosenEntry;
