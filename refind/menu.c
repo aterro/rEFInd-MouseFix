@@ -609,13 +609,12 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                 continue;
             }
         }
-
         // Determine the time to wait for the next event / frame update for FPS control.
         // The mock timer advances by 1ms per call, so if we call WaitForInput with N ms,
         // the mock timer will effectively advance by N ms.
         // We want to achieve roughly 60 FPS, which is ~16.67 ms per frame.
         // So, we'll aim for a LoopWaitMs of around 16 or 17 ms.
-        UINTN LoopWaitMs = 17; // Target ~60 FPS (1000ms / 60 frames = 16.66...ms). Use 17 for robustness.
+        UINTN LoopWaitMs = 5; // Use 5 for robustness.
 
         // Only calculate remaining time if the timer is NOT permanently disabled
         if (!TimerPermanentlyDisabled) {
@@ -646,9 +645,8 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                 }
             }
         } else {
-            // If timer is permanently disabled, ensure LoopWaitMs is still at least 17ms for responsiveness.
-            // This ensures smooth mouse movement even when the main menu timer is off.
-            LoopWaitMs = 17; // Maintain a constant frame rate for responsiveness
+            // If timer is permanently disabled, ensure LoopWaitMs is still at least 5ms for responsiveness.
+            LoopWaitMs = 5; // Maintain a constant frame rate for responsiveness
         }
 
         // Ensure LoopWaitMs is at least 1ms if any active timer or pointer is expected,
@@ -777,6 +775,7 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
             LOG(3, LOG_LINE_NORMAL, L"Painting ALL elements.\n");
             StyleFunc(Screen, &State, MENU_FUNCTION_PAINT_ALL, NULL);
             State.PaintAll = FALSE;
+            StyleFunc(Screen, &State, MENU_FUNCTION_PAINT_SELECTION, NULL);
             State.PaintSelection = FALSE;
         } else if (State.PaintSelection) {
             LOG(3, LOG_LINE_NORMAL, L"Painting SELECTION only.\n");
@@ -2011,8 +2010,10 @@ UINTN RunMainMenu(REFIT_MENU_SCREEN *Screen, CHAR16** DefaultSelection, REFIT_ME
         Style = GraphicsMenuStyle;
         MainStyle = MainMenuStyle;
         PointerEnabled = PointerActive = pdAvailable();
-        DrawSelection = !PointerEnabled;
-    }
+ //     DrawSelection = !PointerEnabled;
+	if (Screen->TimeoutSeconds > 0) { DrawSelection = !PointerEnabled; }
+	else { DrawSelection = TRUE; }
+     }
 
     while (!MenuExit) {
         TempChosenEntry = NULL; // Reset for each loop iteration
