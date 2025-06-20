@@ -613,8 +613,8 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
         // The mock timer advances by 1ms per call, so if we call WaitForInput with N ms,
         // the mock timer will effectively advance by N ms.
         // We want to achieve roughly 60 FPS, which is ~16.67 ms per frame.
-        // So, we'll aim for a LoopWaitMs of around 16 or 17 ms.
-        UINTN LoopWaitMs = 5; // Use 5 for robustness.
+        // So, we'll aim for a LoopWaitMs of around 90 ms.
+        UINTN LoopWaitMs = 90; // Use 90 for realtime simulation.
 
         // Only calculate remaining time if the timer is NOT permanently disabled
         if (!TimerPermanentlyDisabled) {
@@ -645,8 +645,8 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                 }
             }
         } else {
-            // If timer is permanently disabled, ensure LoopWaitMs is still at least 5ms for responsiveness.
-            LoopWaitMs = 5; // Maintain a constant frame rate for responsiveness
+            // If timer is permanently disabled, ensure LoopWaitMs is still at least 1ms for responsiveness.
+            LoopWaitMs = 1; // Maintain a constant frame rate for responsiveness
         }
 
         // Ensure LoopWaitMs is at least 1ms if any active timer or pointer is expected,
@@ -2013,6 +2013,7 @@ UINTN RunMainMenu(REFIT_MENU_SCREEN *Screen, CHAR16** DefaultSelection, REFIT_ME
  //     DrawSelection = !PointerEnabled;
 	if (Screen->TimeoutSeconds > 0) { DrawSelection = !PointerEnabled; }
 	else { DrawSelection = TRUE; }
+//	DrawSelection = TRUE; // use this to always show selection
      }
 
     while (!MenuExit) {
