@@ -2064,7 +2064,7 @@ UINTN RunMainMenu(REFIT_MENU_SCREEN *Screen, CHAR16** DefaultSelection, REFIT_ME
             MyFreePool(MenuTitle);
             MenuTitle = NULL; // Reset to NULL for next iteration
         }
-    refit_call1_wrapper(gBS->Stall, 15000); //  Add a 15ms delay for consistent frame rate and to fix click detection on old firmware
+    refit_call1_wrapper(gBS->Stall, 10000); //  Add a 10ms delay for consistent frame rate and to fix click detection on old firmware
 
     } // while (!MenuExit)
 

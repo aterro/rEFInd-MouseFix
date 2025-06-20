@@ -76,6 +76,9 @@ VOID pdInitialize() {
                                                     SelfImageHandle, NULL, EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
             if (status == EFI_SUCCESS) {
                 NumAPointerDevices++;
+// NEW: Add a small delay here if needed for absolute pointers (e.g., touchscreens)
+                 refit_call1_wrapper(gBS->Stall, 5 * 1000);
+// 5 milliseconds (5000 microseconds)
             }
         }
     } else {
@@ -94,6 +97,9 @@ VOID pdInitialize() {
             EFI_STATUS status = refit_call6_wrapper(gBS->OpenProtocol, SPointerHandles[Index], &SPointerGuid, (VOID **) &SPointerProtocol[NumSPointerDevices], SelfImageHandle, NULL, EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
             if (status == EFI_SUCCESS) {
                 NumSPointerDevices++;
+// NEW: Add a small delay after successfully opening the protocol for each simple pointer device
+                refit_call1_wrapper(gBS->Stall, 5 * 1000);
+// 5 milliseconds (5000 microseconds)
             } 
         }
     } else {
@@ -102,7 +108,7 @@ VOID pdInitialize() {
     // Existing 0.5-second general delay for all pointer drivers/firmware to settle
     if (NumAPointerDevices > 0 || NumSPointerDevices > 0) { // Check if any devices were successfully opened 
         refit_call1_wrapper(gBS->Stall, 500000);
-    // 500,000 microseconds = 0.5 seconds 
+// 500,000 microseconds = 0.5 seconds 
     }
     // --- START OF SURGICAL FIX (from refindplus logic) ---
     // Set PointerAvailable: True if any pointer device was successfully opened.
@@ -219,7 +225,7 @@ EFI_STATUS pdUpdateState() {
     UINTN EfiMajorVersion = ST->Hdr.Revision >> 16;
     UINTN EfiMinorVersion = ST->Hdr.Revision & ((1 << 16) - 1);
     BOOLEAN AddStall = FALSE;
-    if (EfiMajorVersion < 2 || (EfiMajorVersion == 2 && EfiMinorVersion < 30)) {
+    if (EfiMajorVersion < 2 || (EfiMajorVersion == 2 && EfiMinorVersion < 40)) {
         AddStall = TRUE;
     }
 
