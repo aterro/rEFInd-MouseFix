@@ -605,7 +605,7 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                 refit_call2_wrapper(gST->ConIn->Reset, gST->ConIn, TRUE);
             }
             if (WaitForRelease) {
-                refit_call1_wrapper(gBS->Stall, 15000); // Stall for 1.5ms
+                refit_call1_wrapper(gBS->Stall, 5000); // Stall for 5ms
                 continue;
             }
         }
@@ -2010,7 +2010,7 @@ UINTN RunMainMenu(REFIT_MENU_SCREEN *Screen, CHAR16** DefaultSelection, REFIT_ME
         Style = GraphicsMenuStyle;
         MainStyle = MainMenuStyle;
         PointerEnabled = PointerActive = pdAvailable();
- //     DrawSelection = !PointerEnabled;
+//      DrawSelection = !PointerEnabled;
 	if (Screen->TimeoutSeconds > 0) { DrawSelection = !PointerEnabled; }
 	else { DrawSelection = TRUE; }
 //	DrawSelection = TRUE; // use this to always show selection
@@ -2064,7 +2064,7 @@ UINTN RunMainMenu(REFIT_MENU_SCREEN *Screen, CHAR16** DefaultSelection, REFIT_ME
             MyFreePool(MenuTitle);
             MenuTitle = NULL; // Reset to NULL for next iteration
         }
-    refit_call1_wrapper(gBS->Stall, 10000); //  Add a 10ms delay for consistent frame rate and to fix click detection on old firmware
+    refit_call1_wrapper(gBS->Stall, 15000); //  Add a 15ms delay for consistent frame rate and to fix click detection on old firmware
 
     } // while (!MenuExit)
 
