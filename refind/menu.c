@@ -1,4 +1,4 @@
-/* https://gemini.google.com/app/2fbb3995e9ac5149
+/*
  * refit/menu.c
  * Menu functions
  *
@@ -407,95 +407,62 @@ INPUT_TYPE WaitForInput(IN UINTN TimeoutMs) {
     EFI_STATUS  Status;
     UINTN       Index;
 
-    UINTN InitialEventCount = 1 + pdCount();
+    // If TimeoutMs is 0, we'll poll. If > 0, we'll wait for that duration.
+    // A timeout of 0 in SetTimer means it expires immediately, making WaitForEvent non-blocking.
+    // So, we don't need a special case for TimeoutMs == 0 here. It's handled by the timer logic.
 
-    WaitListLocal = AllocatePool(InitialEventCount * sizeof(EFI_EVENT)); //
+    UINTN InitialEventCount = 1 + pdCount();
+    WaitListLocal = AllocatePool((InitialEventCount + 1) * sizeof(EFI_EVENT)); // Always allocate space for timer
     if (WaitListLocal == NULL) {
-        LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to allocate initial WaitList memory\n"); //
-        if (TimeoutMs > 0) {
-            refit_call1_wrapper(gBS->Stall, TimeoutMs * 10000); //
-        } else {
-            refit_call1_wrapper(gBS->Stall, 10000); //
-        }
-        // This is a fallback and the mock timer won't advance here, so it won't be accurate.
-        // But for testing purposes, if allocation fails, we still need to return.
+        LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to allocate initial WaitList memory\n");
         return INPUT_TIMER_ERROR;
     }
 
-    WaitListLocal[WaitListLength++] = gST->ConIn->WaitForKey; // Keyboard event is always first [cite: 141]
+    WaitListLocal[WaitListLength++] = gST->ConIn->WaitForKey;
     for (UINTN i = 0; i < pdCount(); i++) {
-        WaitListLocal[WaitListLength++] = pdWaitEvent(i); // Get the EFI_EVENT for each pointer device [cite: 142]
+        WaitListLocal[WaitListLength++] = pdWaitEvent(i);
     }
 
-    if (TimeoutMs > 0) { // If a timeout is specified [cite: 134]
-        // Reallocate WaitListLocal to add space for the TimerEvent [cite: 143]
-        WaitListLocal = ReallocatePool(WaitListLocal,
-                                       WaitListLength * sizeof(EFI_EVENT),
-                                       (WaitListLength + 1) * sizeof(EFI_EVENT)); // [cite: 144]
-        if (WaitListLocal == NULL) {
-            LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to reallocate WaitList for timer\n"); // [cite: 145]
-            MyFreePool(WaitListLocal); // [cite: 146]
-            refit_call1_wrapper(gBS->Stall, TimeoutMs * 10000); // [cite: 147]
-            return INPUT_TIMER_ERROR;
-        }
-        WaitListLength++; // [cite: 146]
-        Status = refit_call5_wrapper(gBS->CreateEvent,
-                                     EVT_TIMER,
-                                     TPL_CALLBACK,
-                                     NULL, NULL, &TimerEvent); // [cite: 147, 148]
-        if (EFI_ERROR(Status)) {
-            LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to create timer event with EVT_TIMER only: %r\n", Status); // [cite: 149]
-            MyFreePool(WaitListLocal); // [cite: 150]
-            refit_call1_wrapper(gBS->Stall, TimeoutMs * 10000); // [cite: 151]
-            return INPUT_TIMER_ERROR;
-        }
-
-        Status = refit_call3_wrapper(gBS->SetTimer, TimerEvent, TimerRelative,
-                                     TimeoutMs * 10000); // Convert milliseconds to 100ns units [cite: 150]
-        if (EFI_ERROR(Status)) {
-            LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to set timer after creation: %r\n", Status); // [cite: 151]
-            refit_call1_wrapper(gBS->CloseEvent, TimerEvent); // [cite: 152]
-            MyFreePool(WaitListLocal); // [cite: 153]
-            refit_call1_wrapper(gBS->Stall, TimeoutMs * 10000); // [cite: 153]
-            return INPUT_TIMER_ERROR;
-        }
-
-        WaitListLocal[WaitListLength - 1] = TimerEvent; // Timer event at the end [cite: 153]
+    Status = refit_call5_wrapper(gBS->CreateEvent, EVT_TIMER, TPL_CALLBACK, NULL, NULL, &TimerEvent);
+    if (EFI_ERROR(Status)) {
+        LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to create timer event: %r\n", Status);
+        MyFreePool(WaitListLocal);
+        return INPUT_TIMER_ERROR;
     }
+
+    // If TimeoutMs is 0, this will be a poll. Otherwise a wait.
+    Status = refit_call3_wrapper(gBS->SetTimer, TimerEvent, TimerRelative, TimeoutMs * 10000);
+    if (EFI_ERROR(Status)) {
+        LOG(2, LOG_LINE_NORMAL, L"WaitForInput: Failed to set timer: %r\n", Status);
+        refit_call1_wrapper(gBS->CloseEvent, TimerEvent);
+        MyFreePool(WaitListLocal);
+        return INPUT_TIMER_ERROR;
+    }
+
+    WaitListLocal[WaitListLength++] = TimerEvent;
 
     // This is the actual wait.
-    Status = refit_call3_wrapper(gBS->WaitForEvent, WaitListLength, WaitListLocal, &Index); // [cite: 154]
+    Status = refit_call3_wrapper(gBS->WaitForEvent, WaitListLength, WaitListLocal, &Index);
 
-    // *** RE-INTEGRATE THE MOCK TIMER ADVANCEMENT HERE ***
-    // This is the key: Advance the mock time by the amount that was intended to be waited.
-    // This simulates time passing during the actual EFI wait.
-    mock_ms_time_counter += TimeoutMs; // [cite: 155]
+    mock_ms_time_counter += TimeoutMs;
 
-    if (TimerEvent != NULL) {
-        refit_call1_wrapper(gBS->CloseEvent, TimerEvent); // [cite: 155]
-    }
-    MyFreePool(WaitListLocal); // [cite: 156]
+    refit_call1_wrapper(gBS->CloseEvent, TimerEvent);
+    MyFreePool(WaitListLocal);
 
     if (EFI_ERROR(Status)) {
-        LOG(2, LOG_LINE_NORMAL, L"WaitForInput: WaitForEvent error: %r\n", Status); // [cite: 157]
+        LOG(2, LOG_LINE_NORMAL, L"WaitForInput: WaitForEvent error: %r\n", Status);
         return INPUT_TIMER_ERROR;
     }
 
-    if (Index == 0) { // Keyboard event (always first if added) [cite: 157]
-        return INPUT_KEY; // [cite: 157]
-    } else if (pdCount() > 0 && Index >= 1 && Index < (1 + pdCount())) { // Pointer event(s) [cite: 158]
-        return INPUT_POINTER; // [cite: 158]
-    } else if (TimeoutMs > 0 && Index == (WaitListLength - 1) && TimerEvent != NULL) { // Timer event [cite: 159]
-        return INPUT_TIMEOUT_EXPIRED; // [cite: 159]
+    if (Index == 0) {
+        return INPUT_KEY;
+    } else if (pdCount() > 0 && Index >= 1 && Index < (1 + pdCount())) {
+        return INPUT_POINTER;
+    } else if (Index == (WaitListLength - 1)) {
+        return INPUT_TIMEOUT_EXPIRED;
     }
 
-    // If we reach here with TimeoutMs == 0 (indefinite wait) and no event,
-    // ensure mock time still advances minimally to prevent complete freeze.
-    // This handles the case where WaitForInput is called with 0 timeout and nothing happens.
-    if (TimeoutMs == 0) {
-        mock_ms_time_counter += 1; // Simulate minimal time step for the loop to progress. [cite: 161]
-    }
-    return INPUT_NO_EVENT; // [cite: 162]
+    return INPUT_NO_EVENT;
 }
 //
 // generic menu function
@@ -595,66 +562,54 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
 
         // 1. Handle WaitForRelease (prevents processing held keys)
         if (WaitForRelease) {
-            Status = refit_call2_wrapper(gST->ConIn->ReadKeyStroke, gST->ConIn, &key);
-            if (!EFI_ERROR(Status)) {
-                LOG(3, LOG_LINE_NORMAL, L"Waiting for key release: Key still pressed (ScanCode=%x, UnicodeChar=%x).\n", key.ScanCode, key.UnicodeChar);
-                refit_call2_wrapper(gST->ConIn->Reset, gST->ConIn, FALSE);
-            } else {
-                LOG(3, LOG_LINE_NORMAL, L"Key released. Resuming normal input processing.\n");
-                WaitForRelease = FALSE;
-                refit_call2_wrapper(gST->ConIn->Reset, gST->ConIn, TRUE);
-            }
-            if (WaitForRelease) {
-                refit_call1_wrapper(gBS->Stall, 5000); // Stall for 5ms
-                continue;
-            }
+            refit_call1_wrapper(gBS->Stall, 15000); // Stall for 15ms
+            continue;
         }
-        // Determine the time to wait for the next event / frame update for FPS control.
-        // The mock timer advances by 1ms per call, so if we call WaitForInput with N ms,
-        // the mock timer will effectively advance by N ms.
-        // We want to achieve roughly 60 FPS, which is ~16.67 ms per frame.
-        // So, we'll aim for a LoopWaitMs of around 90 ms.
-        UINTN LoopWaitMs = 90; // Use 90 for realtime simulation.
 
-        // Only calculate remaining time if the timer is NOT permanently disabled
+        // To achieve a smooth UI, we aim for a target frame time. 16ms corresponds to ~60 FPS.
+        // This will be our base wait time in the input loop.
+        UINTN LoopWaitMs = 16;
+
+        // If timeouts are active (and not permanently disabled by user input), we must not
+        // wait longer than the time remaining for the next timeout event. We take the minimum
+        // of our target frame time and any pending timeout durations.
         if (!TimerPermanentlyDisabled) {
-            // Calculate remaining time for menu timeout if active
+            UINT64 ElapsedSinceLastInputMs = CurrentTimeMs - LastInputMs;
+
+            // Check menu timeout
             if (HaveTimeout && MenuTimeoutMs > 0) {
-                UINT64 ElapsedSinceLastInputMs = CurrentTimeMs - LastInputMs;
-                UINTN RemainingMenuTimeoutMs = 0;
-                if (MenuTimeoutMs > ElapsedSinceLastInputMs) {
-                    RemainingMenuTimeoutMs = (UINTN)(MenuTimeoutMs - ElapsedSinceLastInputMs);
-                }
-
-                // If remaining timeout is less than our calculated FPS wait, use it.
-                if (RemainingMenuTimeoutMs > 0 && RemainingMenuTimeoutMs < LoopWaitMs) {
-                    LoopWaitMs = RemainingMenuTimeoutMs;
+                if (ElapsedSinceLastInputMs < MenuTimeoutMs) {
+                    UINTN RemainingMenuTimeoutMs = (UINTN)(MenuTimeoutMs - ElapsedSinceLastInputMs);
+                    if (RemainingMenuTimeoutMs < LoopWaitMs) {
+                        LoopWaitMs = RemainingMenuTimeoutMs;
+                    }
+                } else {
+                    // Timeout has already expired, so we set the wait to 0 to process it immediately.
+                    LoopWaitMs = 0;
                 }
             }
 
-            // Calculate remaining time for screensaver timeout if active
+            // Check screensaver timeout
             if (ScreensaverTimeoutMs > 0) {
-                UINT64 ElapsedSinceLastInputMs = CurrentTimeMs - LastInputMs;
-                UINTN RemainingScreensaverMs = 0;
-                if (ScreensaverTimeoutMs > ElapsedSinceLastInputMs) {
-                    RemainingScreensaverMs = (UINTN)(ScreensaverTimeoutMs - ElapsedSinceLastInputMs);
-                }
-                // If remaining screensaver timeout is less than our calculated FPS wait, use it.
-                if (RemainingScreensaverMs > 0 && RemainingScreensaverMs < LoopWaitMs) {
-                    LoopWaitMs = RemainingScreensaverMs;
+                if (ElapsedSinceLastInputMs < ScreensaverTimeoutMs) {
+                    UINTN RemainingScreensaverMs = (UINTN)(ScreensaverTimeoutMs - ElapsedSinceLastInputMs);
+                    // Check against the current LoopWaitMs, which might have already been lowered
+                    // by the menu timeout logic above.
+                    if (RemainingScreensaverMs < LoopWaitMs) {
+                        LoopWaitMs = RemainingScreensaverMs;
+                    }
+                } else {
+                    // Screensaver timeout has expired, process immediately.
+                    LoopWaitMs = 0;
                 }
             }
-        } else {
-            // If timer is permanently disabled, ensure LoopWaitMs is still at least 1ms for responsiveness.
-            LoopWaitMs = 1; // Maintain a constant frame rate for responsiveness
         }
 
-        // Ensure LoopWaitMs is at least 1ms if any active timer or pointer is expected,
-        // or if we're not in a specific "wait indefinitely" state.
-        if (LoopWaitMs == 0 && (HaveTimeout || ScreensaverTimeoutMs > 0 || PointerEnabled)) {
-            LoopWaitMs = 1;
-        } else if (!HaveTimeout && ScreensaverTimeoutMs == 0 && !PointerEnabled) {
-            LoopWaitMs = 0; // Can wait indefinitely if no timeouts or pointer
+        // If there are no active timers (menu or screensaver) and no pointer enabled,
+        // we can wait indefinitely for a key press. This prevents the CPU from spinning
+        // unnecessarily in simple menus that don't require constant updates.
+        if (!HaveTimeout && ScreensaverTimeoutMs == 0 && !PointerEnabled) {
+            LoopWaitMs = 0; // Wait indefinitely for input
         }
 
         // 3. Call WaitForInput to wait for an event or the calculated timeout.
@@ -856,7 +811,7 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
             }
 
             if (StyleFunc != MainMenuStyle) {
-                if (ClickDetected) { MenuExit = MENU_EXIT_ENTER; }
+                if (ClickDetected) { gSuppressPointerDraw = FALSE; MenuExit = MENU_EXIT_ENTER;}
             } else {
                 State.PreviousSelection = State.CurrentSelection;
                 Item = FindMainMenuItem(Screen, &State, CurrentPointerState.X, CurrentPointerState.Y);
@@ -866,6 +821,9 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
                         DrawSelection = FALSE;
                         State.PaintSelection = FALSE;
                         State.PaintAll = TRUE;
+                        if (ClickDetected || CurrentPointerState.Press) {
+                        gSuppressPointerDraw = FALSE;
+                        pdDraw();}
                         if(ClickDetected) { MenuExit = MENU_EXIT_ZERO;}
                         LOG(3, LOG_LINE_NORMAL, L"Pointer: No item, deselecting.\n"); }
                         break;
@@ -2010,7 +1968,7 @@ UINTN RunMainMenu(REFIT_MENU_SCREEN *Screen, CHAR16** DefaultSelection, REFIT_ME
         Style = GraphicsMenuStyle;
         MainStyle = MainMenuStyle;
         PointerEnabled = PointerActive = pdAvailable();
-//      DrawSelection = !PointerEnabled;
+ //     DrawSelection = !PointerEnabled;
 	if (Screen->TimeoutSeconds > 0) { DrawSelection = !PointerEnabled; }
 	else { DrawSelection = TRUE; }
 //	DrawSelection = TRUE; // use this to always show selection
@@ -2064,7 +2022,7 @@ UINTN RunMainMenu(REFIT_MENU_SCREEN *Screen, CHAR16** DefaultSelection, REFIT_ME
             MyFreePool(MenuTitle);
             MenuTitle = NULL; // Reset to NULL for next iteration
         }
-    refit_call1_wrapper(gBS->Stall, 15000); //  Add a 15ms delay for consistent frame rate and to fix click detection on old firmware
+    refit_call1_wrapper(gBS->Stall, 10000); //  Add a 10ms delay for consistent frame rate and to fix click detection on old firmware
 
     } // while (!MenuExit)
 
