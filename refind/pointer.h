@@ -50,6 +50,8 @@ EFI_EVENT pdWaitEvent(IN UINTN Index);
 EFI_STATUS pdUpdateState();
 POINTER_STATE pdGetState();
 
+VOID pdSetPosition (UINTN X, UINTN Y);
+
 VOID pdDraw();
 VOID pdClear();
 

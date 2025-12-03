@@ -133,6 +133,8 @@ BOOLEAN EjectMedia();
 //INTN FindMainMenuItem(IN REFIT_MENU_SCREEN *Screen, IN SCROLL_STATE *State, IN UINTN X, IN UINTN Y);
 // Used in old pointer logic
 VOID BltClearScreen(IN BOOLEAN All); // If used for screensaver
+
+static VOID GetMenuItemCenter (IN REFIT_MENU_SCREEN *Screen, IN SCROLL_STATE *State, IN UINTN ItemIndex, OUT UINTN *CenterX, OUT UINTN *CenterY);
 //
 // Graphics helper functions
 //
@@ -518,6 +520,13 @@ UINTN RunGenericMenu(IN REFIT_MENU_SCREEN *Screen,
     if (*DefaultEntryIndex >= 0 && *DefaultEntryIndex <= State.MaxIndex) {
         State.CurrentSelection = *DefaultEntryIndex;
         UpdateScroll(&State, SCROLL_NONE);
+    }
+
+    // Position pointer at center of default selection
+    if (PointerEnabled && StyleFunc == MainMenuStyle) {
+        UINTN PointerX, PointerY;
+        GetMenuItemCenter (Screen, &State, State.CurrentSelection, &PointerX, &PointerY);
+        pdSetPosition (PointerX, PointerY);
     }
 
     // --- Special immediate key read logic: ONLY if Screen->TimeoutSeconds == -1 ---
@@ -1446,6 +1455,75 @@ UINTN FindMainMenuItem(IN REFIT_MENU_SCREEN *Screen, IN SCROLL_STATE *State, IN 
 
     return ItemIndex;
 } // VOID FindMainMenuItem()
+
+////////////////////////////////////////////////////////////////////////////////
+// Calculate center position of a menu entry for pointer positioning
+////////////////////////////////////////////////////////////////////////////////
+static
+VOID GetMenuItemCenter (
+    IN  REFIT_MENU_SCREEN *Screen,
+    IN  SCROLL_STATE      *State,
+    IN  UINTN              ItemIndex,
+    OUT UINTN             *CenterX,
+    OUT UINTN             *CenterY
+) {
+    UINTN  i;
+    UINTN  row0PosX, row1PosX, row1PosXRunning;
+    UINTN  row0PosY, row1PosY;
+    UINTN  row0Count, row1Count;
+
+    // Initialize to screen center as a fallback
+    *CenterX = UGAWidth >> 1;
+    *CenterY = UGAHeight >> 1;
+
+    if (ItemIndex > State->MaxIndex) {
+        // Invalid index, default to screen center (already set)
+        return;
+    }
+
+    // Replicate layout logic from MainMenuStyle's MENU_FUNCTION_INIT
+    row0Count = 0;
+    row1Count = 0;
+    for (i = 0; i <= State->MaxIndex; i++) {
+       if (Screen->Entries[i]->Row == 1) {
+          row1Count++;
+       } else {
+          if (row0Count < State->MaxVisible)
+             row0Count++;
+       }
+    }
+
+    row0PosX = (UGAWidth + TILE_XSPACING - (TileSizes[0] + TILE_XSPACING) * row0Count) >> 1;
+    row0PosY = ComputeRow0PosY();
+    row1PosX = (UGAWidth + TILE_XSPACING - (TileSizes[1] + TILE_XSPACING) * row1Count) >> 1;
+    row1PosY = row0PosY + TileSizes[0] + TILE_YSPACING;
+
+    if (Screen->Entries[ItemIndex]->Row == 0) {
+        // Row 0 (main loaders), which are scrollable
+        if (ItemIndex >= State->FirstVisible && ItemIndex <= State->LastVisible) {
+            UINTN visibleIndex = ItemIndex - State->FirstVisible;
+            *CenterX = (row0PosX + (TileSizes[0] + TILE_XSPACING) * visibleIndex) + (TileSizes[0] >> 1);
+            *CenterY = row0PosY + (TileSizes[0] >> 1);
+        } else {
+            // Fallback to screen center if item is not visible
+            *CenterX = UGAWidth >> 1;
+            *CenterY = UGAHeight >> 1;
+        }
+    } else {
+        // Row 1 (tools), not scrollable
+        row1PosXRunning = row1PosX;
+        for (i = 0; i <= State->MaxIndex; i++) {
+            if (Screen->Entries[i]->Row == 1) {
+                if (i == ItemIndex) {
+                    *CenterX = row1PosXRunning + (TileSizes[1] >> 1);
+                    *CenterY = row1PosY + (TileSizes[1] >> 1);
+                    return;
+                }
+                row1PosXRunning += TileSizes[1] + TILE_XSPACING;
+            }
+        }
+    }
+} // static VOID GetMenuItemCenter()
 
 // Enable the user to edit boot loader options.
 // Returns TRUE if the user exited with edited options; FALSE if the user
